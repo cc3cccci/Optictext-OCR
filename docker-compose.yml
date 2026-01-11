@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  ocr-app:
+    build: .
+    image: optictext-ocr:latest
+    container_name: optictext-ocr
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app/backend
+    restart: always
+    # Resource limits as per requirements
+    deploy:
+      resources:
+        limits:
+          memory: 2G
