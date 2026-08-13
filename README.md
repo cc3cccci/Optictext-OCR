@@ -40,6 +40,8 @@ python deploy.py                              # 首次连接未知主机可加 -
 
 完成后访问 `http://192.168.50.35:9999`。
 
+交给本机可 SSH 的 Agent 时,请使用仓库根目录 [`DEPLOY_HANDOFF.md`](DEPLOY_HANDOFF.md):内含预检、部署、异步验收、回滚与故障排查的完整命令。
+
 不要使用 `docker compose build --pull`。国内网络 Docker Hub 通常不可达,构建依赖设备已缓存的 `node:20-slim` 与 `python:3.10-slim`;Dockerfile 的 apt 层保持不变以命中缓存。npm / pip 使用 npmmirror 与清华源。
 
 容器限制:内存 2G、CPU 3 核、`OMP_NUM_THREADS=2` / `ORT_INTRA_OP=2`,避免把板子打满。
