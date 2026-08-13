@@ -1,16 +1,15 @@
-version: '3.8'
-
 services:
   ocr-app:
     build: .
     image: optictext-ocr:latest
     container_name: optictext-ocr
     ports:
-      - "8000:8000"
+      # 对外服务端口 9999(容器内 8000)
+      - "9999:8000"
     volumes:
-      - ./backend:/app/backend
+      # 识别历史数据库与图片,持久化到宿主机,升级/重建容器不丢失
+      - ./data:/app/data
     restart: always
-    # Resource limits as per requirements
     deploy:
       resources:
         limits:
