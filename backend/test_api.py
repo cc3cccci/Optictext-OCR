@@ -47,7 +47,10 @@ def make_test_image() -> bytes:
 
 def make_test_pdf() -> bytes:
     """生成含文本层的测试 PDF(验证文本层直提路径)。"""
-    import fitz
+    try:
+        import pymupdf as fitz
+    except ImportError:
+        import fitz
 
     doc = fitz.open()
     page = doc.new_page()

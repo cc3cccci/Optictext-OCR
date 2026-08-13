@@ -27,6 +27,16 @@ THUMB_WIDTH = 320
 THUMB_JPEG_QUALITY = 80
 
 
+def _import_pymupdf():
+    """兼容不同版本的 PyMuPDF 导入方式(1.24.3+ 推荐 import pymupdf)。"""
+    try:
+        import pymupdf
+        return pymupdf
+    except ImportError:
+        import fitz
+        return fitz
+
+
 class OCRProcessor:
     def __init__(self):
         # RapidOCR 默认加载内置 PP-OCRv4 mobile 模型(中英混合),
@@ -60,7 +70,7 @@ class OCRProcessor:
 
     def process_pdf(self, pdf_content: bytes, images_dir: str, basename: str) -> dict:
         """逐页处理 PDF:文本层优先,扫描页走 OCR;预览图取第一页。"""
-        import fitz  # PyMuPDF,延迟导入以便无该依赖时图片功能仍可用
+        fitz = _import_pymupdf()  # 延迟导入,无该依赖时图片功能仍可用
 
         try:
             doc = fitz.open(stream=pdf_content, filetype="pdf")
@@ -176,7 +186,7 @@ class OCRProcessor:
 
     @staticmethod
     def _render_page(page, zoom: float) -> np.ndarray:
-        import fitz
+        fitz = _import_pymupdf()
 
         pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
         img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
