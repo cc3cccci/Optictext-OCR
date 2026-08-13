@@ -1,88 +1,13 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>OpticText OCR</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Playfair+Display:ital,wght@0,600;1,600&display=swap" rel="stylesheet">
-    <script>
-      tailwind.config = {
-        darkMode: 'class',
-        theme: {
-          extend: {
-            colors: {
-              primary: "#C5A059", // Metallic Gold
-              "primary-dark": "#A68545",
-              "bg-cream": "#FDFBF7", // Cream
-              "bg-dark": "#1C1611", // Deep Bronze
-              "surface-light": "#F7F2E8", // Darker Cream
-              "surface-dark": "#2A2118", // Surface Bronze
-              "surface-dark-lighter": "#3D3025",
-              "text-brown": "#422A12",
-              "text-cream": "#F3EFE5",
-              "border-sepia": "#E6DCC8",
-              "border-bronze": "#3C2F24"
-            },
-            fontFamily: {
-              sans: ["'Plus Jakarta Sans'", "sans-serif"],
-              mono: ["'JetBrains Mono'", "monospace"],
-              serif: ["'Playfair Display'", "serif"],
-            },
-            animation: {
-                'scan-line': 'scan 3s ease-in-out infinite',
-            },
-            keyframes: {
-                scan: {
-                    '0%, 100%': { top: '0%', opacity: '0' },
-                    '10%': { opacity: '1' },
-                    '50%': { top: '100%', opacity: '1' },
-                    '90%': { opacity: '1' }
-                }
-            }
-          },
-        },
-      }
-    </script>
-    <style>
-      body {
-        margin: 0;
-        -webkit-font-smoothing: antialiased;
-        -moz-osx-font-smoothing: grayscale;
-      }
-      /* Custom Scrollbar for a premium feel */
-      ::-webkit-scrollbar {
-        width: 6px;
-        height: 6px;
-      }
-      ::-webkit-scrollbar-track {
-        background: transparent;
-      }
-      ::-webkit-scrollbar-thumb {
-        background: rgba(197, 160, 89, 0.3);
-        border-radius: 3px;
-      }
-      ::-webkit-scrollbar-thumb:hover {
-        background: rgba(197, 160, 89, 0.6);
-      }
-    </style>
-  <script type="importmap">
-{
-  "imports": {
-    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "react": "https://esm.sh/react@^19.2.3",
-    "jspdf": "https://esm.sh/jspdf@2.5.1"
-  }
-}
-</script>
-<link rel="stylesheet" href="/index.css">
-</head>
+    <title>OpticText 文字识别</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23C5A059' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 7V5a2 2 0 0 1 2-2h2'/%3E%3Cpath d='M17 3h2a2 2 0 0 1 2 2v2'/%3E%3Cpath d='M21 17v2a2 2 0 0 1-2 2h-2'/%3E%3Cpath d='M7 21H5a2 2 0 0 1-2-2v-2'/%3E%3Cline x1='7' x2='17' y1='12' y2='12'/%3E%3C/svg%3E" />
+  </head>
   <body class="bg-bg-cream text-text-brown dark:bg-bg-dark dark:text-text-cream overflow-hidden">
     <div id="root"></div>
-  <script type="module" src="/index.tsx"></script>
-</body>
+    <script type="module" src="/index.tsx"></script>
+  </body>
 </html>
