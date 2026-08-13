@@ -6,11 +6,13 @@
 - GET  /api/scans/{id}/export.pdf  双层可检索 PDF
 """
 import asyncio
+import hashlib
 import os
+import re
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 from urllib.parse import quote
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -52,14 +54,42 @@ except Exception as e:
     ocr_service = None
 
 
-class TextUpdate(BaseModel):
-    extracted_text: str
+class ScanUpdate(BaseModel):
+    extracted_text: Optional[str] = None
+    title: Optional[str] = None
+    tags: Optional[List[str]] = None
+    pinned: Optional[bool] = None
 
 
 class ReflowBody(BaseModel):
     layout_mode: Optional[str] = None
     ignore_header: Optional[float] = None
     ignore_footer: Optional[float] = None
+
+
+class BatchDeleteBody(BaseModel):
+    ids: List[str]
+
+
+_FILENAME_EXT = re.compile(r"\.(png|jpe?g|webp|gif|bmp|tiff?|pdf)$", re.I)
+_PAGE_MARK = re.compile(r"^——\s*第\s*\d+\s*页\s*——$")
+
+
+def _looks_like_filename(title: str) -> bool:
+    return bool(_FILENAME_EXT.search((title or "").strip()))
+
+
+def _title_from_text(text: str, fallback: str) -> str:
+    for raw in (text or "").splitlines():
+        line = re.sub(r"\s+", " ", raw).strip()
+        if not line or _PAGE_MARK.match(line) or line.startswith("正在"):
+            continue
+        return line[:40] + "…" if len(line) > 40 else line
+    return fallback
+
+
+def _file_hash(contents: bytes) -> str:
+    return hashlib.sha256(contents).hexdigest()
 
 
 def _original_ext(filename: str, is_pdf: bool) -> str:
@@ -158,22 +188,25 @@ async def _run_ocr_job(scan_id: str, is_pdf: bool) -> None:
         db.update_scan_fields(scan_id, status="ERROR", error_message=f"识别失败:{e}")
         return
 
-    db.update_scan_fields(
-        scan_id,
-        status="READY",
-        error_message="",
-        confidence=round(result["confidence"], 4),
-        processing_time=round(time.time() - start_time, 2),
-        extracted_text=result["extracted_text"],
-        segments=result["segments"],
-        pages=result["pages"],
-        image_file=result["image_file"],
-        thumb_file=result["thumb_file"],
-        image_width=result["image_width"],
-        image_height=result["image_height"],
-        page_count=result["page_count"],
-        page_done=result.get("page_done") or result["page_count"],
-    )
+    fields = {
+        "status": "READY",
+        "error_message": "",
+        "confidence": round(result["confidence"], 4),
+        "processing_time": round(time.time() - start_time, 2),
+        "extracted_text": result["extracted_text"],
+        "segments": result["segments"],
+        "pages": result["pages"],
+        "image_file": result["image_file"],
+        "thumb_file": result["thumb_file"],
+        "image_width": result["image_width"],
+        "image_height": result["image_height"],
+        "page_count": result["page_count"],
+        "page_done": result.get("page_done") or result["page_count"],
+    }
+    current = db.get_scan(scan_id, with_segments=False)
+    if current and _looks_like_filename(current.get("title") or ""):
+        fields["title"] = _title_from_text(result.get("extracted_text") or "", current["title"])
+    db.update_scan_fields(scan_id, **fields)
 
 
 @app.get("/api/health")
@@ -217,6 +250,8 @@ async def ocr_endpoint(
 
     scan_id = uuid.uuid4().hex
     original_file = _save_original(scan_id, contents, filename, is_pdf)
+    content_hash = _file_hash(contents)
+    duplicate = db.find_by_hash(content_hash)
     record = db.create_scan({
         "id": scan_id,
         "title": filename,
@@ -230,7 +265,12 @@ async def ocr_endpoint(
         "page_count": 1,
         "page_done": 0,
         "extracted_text": "正在识别中…",
+        "content_hash": content_hash,
+        "tags": [],
+        "pinned": 0,
     })
+    if duplicate:
+        record["duplicate_of"] = {"id": duplicate["id"], "title": duplicate["title"]}
     asyncio.create_task(_run_ocr_job(scan_id, is_pdf))
     return record
 
@@ -292,6 +332,15 @@ async def list_scans(q: Optional[str] = None):
     return db.list_scans(q)
 
 
+@app.post("/api/scans/batch-delete")
+async def batch_delete(payload: BatchDeleteBody):
+    ids = [i.strip() for i in (payload.ids or []) if i and i.strip()]
+    if not ids:
+        raise HTTPException(status_code=400, detail="未提供要删除的记录")
+    deleted = db.delete_scans(ids[:200])
+    return {"ok": True, "deleted": deleted}
+
+
 @app.get("/api/scans/{scan_id}")
 async def get_scan(scan_id: str):
     record = db.get_scan(scan_id, with_segments=True)
@@ -301,8 +350,20 @@ async def get_scan(scan_id: str):
 
 
 @app.patch("/api/scans/{scan_id}")
-async def update_scan(scan_id: str, payload: TextUpdate):
-    record = db.update_scan_text(scan_id, payload.extracted_text)
+async def update_scan(scan_id: str, payload: ScanUpdate):
+    fields = {}
+    if payload.extracted_text is not None:
+        fields["extracted_text"] = payload.extracted_text
+    if payload.title is not None:
+        title = payload.title.strip() or "未命名"
+        fields["title"] = title[:120]
+    if payload.tags is not None:
+        fields["tags"] = payload.tags
+    if payload.pinned is not None:
+        fields["pinned"] = payload.pinned
+    if not fields:
+        raise HTTPException(status_code=400, detail="没有可更新的字段")
+    record = db.update_scan_fields(scan_id, **fields)
     if record is None:
         raise HTTPException(status_code=404, detail="记录不存在")
     return record

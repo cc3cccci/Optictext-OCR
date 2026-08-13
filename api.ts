@@ -55,6 +55,12 @@ export function mapScan(raw: any): DocumentScan {
         segments,
         pages,
         originalFile: raw.original_file,
+        tags: Array.isArray(raw.tags) ? raw.tags.filter(Boolean).map((t: any) => String(t)) : [],
+        pinned: Boolean(raw.pinned),
+        contentHash: raw.content_hash || '',
+        duplicateOf: raw.duplicate_of && raw.duplicate_of.id
+            ? { id: raw.duplicate_of.id, title: raw.duplicate_of.title || '' }
+            : undefined,
     };
 }
 
@@ -137,15 +143,32 @@ export async function pollScanUntilDone(
 }
 
 export async function saveScanText(id: string, text: string): Promise<void> {
-    await request(`/api/scans/${id}`, {
+    await patchScan(id, { extracted_text: text });
+}
+
+export async function patchScan(
+    id: string,
+    body: { extracted_text?: string; title?: string; tags?: string[]; pinned?: boolean },
+): Promise<DocumentScan> {
+    const data = await request(`/api/scans/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ extracted_text: text }),
+        body: JSON.stringify(body),
     });
+    return mapScan(data);
 }
 
 export async function deleteScanById(id: string): Promise<void> {
     await request(`/api/scans/${id}`, { method: 'DELETE' });
+}
+
+export async function batchDeleteScans(ids: string[]): Promise<number> {
+    const data = await request('/api/scans/batch-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+    });
+    return data?.deleted ?? ids.length;
 }
 
 export async function downloadSearchablePdf(id: string, title: string): Promise<void> {

@@ -51,6 +51,9 @@ _EXTRA_COLUMNS = [
     ("ignore_header", "REAL NOT NULL DEFAULT 0.08"),
     ("ignore_footer", "REAL NOT NULL DEFAULT 0.08"),
     ("pages_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ("tags", "TEXT NOT NULL DEFAULT '[]'"),
+    ("pinned", "INTEGER NOT NULL DEFAULT 0"),
+    ("content_hash", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 
@@ -89,6 +92,29 @@ def _col(row: sqlite3.Row, name: str, default: Any) -> Any:
 
 def _image_url(filename: str) -> str:
     return f"/api/images/{filename}" if filename else ""
+
+
+def _parse_tags(raw: Any) -> List[str]:
+    if isinstance(raw, list):
+        tags = raw
+    else:
+        try:
+            tags = json.loads(raw or "[]")
+        except (ValueError, TypeError):
+            return []
+    if not isinstance(tags, list):
+        return []
+    seen = set()
+    out: List[str] = []
+    for item in tags:
+        tag = str(item).strip()
+        if not tag or tag in seen:
+            continue
+        seen.add(tag)
+        out.append(tag[:24])
+        if len(out) >= 12:
+            break
+    return out
 
 
 def _pages_from_row(row: sqlite3.Row) -> List[dict]:
@@ -134,6 +160,9 @@ def _row_to_dict(row: sqlite3.Row, *, with_text: bool, with_segments: bool) -> d
         "ignore_header": _col(row, "ignore_header", 0.08),
         "ignore_footer": _col(row, "ignore_footer", 0.08),
         "text_preview": extracted[:TEXT_PREVIEW_LEN],
+        "tags": _parse_tags(_col(row, "tags", "[]")),
+        "pinned": bool(_col(row, "pinned", 0)),
+        "content_hash": _col(row, "content_hash", "") or "",
     }
     if with_text:
         d["extracted_text"] = extracted
@@ -155,8 +184,9 @@ def create_scan(record: dict) -> dict:
                (id, title, created_at, status, file_size, confidence, processing_time,
                 extracted_text, segments_json, image_file, thumb_file,
                 image_width, image_height, page_count, page_done, error_message,
-                original_file, layout_mode, ignore_header, ignore_footer, pages_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                original_file, layout_mode, ignore_header, ignore_footer, pages_json,
+                tags, pinned, content_hash)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 record["id"], record["title"], record["created_at"],
                 record.get("status", "PROCESSING"),
@@ -177,6 +207,9 @@ def create_scan(record: dict) -> dict:
                 record.get("ignore_header", 0.08),
                 record.get("ignore_footer", 0.08),
                 json.dumps(record.get("pages", []), ensure_ascii=False),
+                json.dumps(_parse_tags(record.get("tags", [])), ensure_ascii=False),
+                1 if record.get("pinned") else 0,
+                record.get("content_hash", "") or "",
             ),
         )
     return get_scan(record["id"], with_segments=True) or {}
@@ -190,6 +223,7 @@ def update_scan_fields(scan_id: str, **fields: Any) -> Optional[dict]:
         "segments_json", "image_file", "thumb_file", "image_width", "image_height",
         "page_count", "page_done", "error_message", "original_file", "layout_mode",
         "ignore_header", "ignore_footer", "pages_json", "title",
+        "tags", "pinned", "content_hash",
     }
     assignments = []
     values: List[Any] = []
@@ -198,6 +232,10 @@ def update_scan_fields(scan_id: str, **fields: Any) -> Optional[dict]:
             key, value = "segments_json", json.dumps(value, ensure_ascii=False)
         elif key == "pages":
             key, value = "pages_json", json.dumps(value, ensure_ascii=False)
+        elif key == "tags" and not isinstance(value, str):
+            value = json.dumps(_parse_tags(value), ensure_ascii=False)
+        elif key == "pinned":
+            value = 1 if value else 0
         if key not in allowed:
             continue
         assignments.append(f"{key} = ?")
@@ -222,7 +260,7 @@ def list_scans(query: Optional[str] = None) -> List[dict]:
         like = f"%{query.strip()}%"
         sql += " WHERE title LIKE ? OR extracted_text LIKE ?"
         params = (like, like)
-    sql += " ORDER BY created_at DESC"
+    sql += " ORDER BY pinned DESC, created_at DESC"
     with _connect() as conn:
         rows = conn.execute(sql, params).fetchall()
     return [_row_to_dict(r, with_text=False, with_segments=False) for r in rows]
@@ -236,8 +274,32 @@ def get_scan(scan_id: str, with_segments: bool = True) -> Optional[dict]:
     return _row_to_dict(row, with_text=True, with_segments=with_segments)
 
 
+def find_by_hash(content_hash: str, exclude_id: Optional[str] = None) -> Optional[dict]:
+    if not content_hash:
+        return None
+    sql = "SELECT * FROM scans WHERE content_hash = ?"
+    params: List[Any] = [content_hash]
+    if exclude_id:
+        sql += " AND id != ?"
+        params.append(exclude_id)
+    sql += " LIMIT 1"
+    with _connect() as conn:
+        row = conn.execute(sql, params).fetchone()
+    if row is None:
+        return None
+    return _row_to_dict(row, with_text=False, with_segments=False)
+
+
 def update_scan_text(scan_id: str, text: str) -> Optional[dict]:
     return update_scan_fields(scan_id, extracted_text=text)
+
+
+def delete_scans(ids: List[str]) -> int:
+    deleted = 0
+    for scan_id in ids:
+        if delete_scan(scan_id):
+            deleted += 1
+    return deleted
 
 
 def delete_scan(scan_id: str) -> bool:

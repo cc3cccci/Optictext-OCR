@@ -102,6 +102,7 @@ def main():
         scan = {}
     else:
         check("轮询直到完成", scan.get("status") == "READY")
+        check("自动标题非文件名", not str(scan.get("title") or "").lower().endswith(".png"), str(scan.get("title")))
 
     text = scan.get("extracted_text", "")
     check("识别出中文", "文字识别" in text or "内网" in text, f"实际文本: {text!r}")
@@ -133,6 +134,44 @@ def main():
     check("保存编辑", r.status_code == 200)
     r = requests.get(f"{BASE_URL}/api/scans/{scan_id}", timeout=10)
     check("编辑已持久化", r.json().get("extracted_text") == new_text)
+
+    r = requests.patch(
+        f"{BASE_URL}/api/scans/{scan_id}",
+        json={"title": "工作台改名", "tags": ["笔记", "测试"], "pinned": True},
+        timeout=10,
+    )
+    check("改名/标签/置顶", r.status_code == 200, r.text[:200])
+    meta = r.json() if r.status_code == 200 else {}
+    check("标题已更新", meta.get("title") == "工作台改名", str(meta.get("title")))
+    check("标签已写入", meta.get("tags") == ["笔记", "测试"], str(meta.get("tags")))
+    check("已置顶", meta.get("pinned") is True, str(meta.get("pinned")))
+    listing = requests.get(f"{BASE_URL}/api/scans", timeout=10).json()
+    listed = next((s for s in listing if s.get("id") == scan_id), {})
+    check("列表含标签与置顶", listed.get("pinned") is True and "笔记" in (listed.get("tags") or []), str(listed))
+
+    r = requests.post(
+        f"{BASE_URL}/api/ocr",
+        files={"file": ("测试图片.png", img_bytes, "image/png")},
+        timeout=60,
+    )
+    dup = r.json() if r.status_code == 200 else {}
+    dup_id = dup.get("id", "")
+    check("重复文件仍可上传", r.status_code == 200 and bool(dup_id), r.text[:200])
+    check("返回 duplicate_of", (dup.get("duplicate_of") or {}).get("id") == scan_id, str(dup.get("duplicate_of")))
+    if dup_id:
+        requests.delete(f"{BASE_URL}/api/scans/{dup_id}", timeout=10)
+
+    extra_ids = []
+    for name in ("a.png", "b.png"):
+        rr = requests.post(
+            f"{BASE_URL}/api/ocr",
+            files={"file": (name, img_bytes, "image/png")},
+            timeout=60,
+        )
+        if rr.status_code == 200:
+            extra_ids.append(rr.json().get("id"))
+    r = requests.post(f"{BASE_URL}/api/scans/batch-delete", json={"ids": extra_ids}, timeout=15)
+    check("批量删除", r.status_code == 200 and r.json().get("deleted") == len(extra_ids), r.text[:200])
 
     r = requests.post(
         f"{BASE_URL}/api/scans/{scan_id}/reflow",

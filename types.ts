@@ -6,6 +6,12 @@ export enum OCRStatus {
 
 export type LayoutMode = 'raw' | 'paragraph' | 'single';
 
+export type WorkspaceMode = 'proof' | 'read' | 'image';
+
+export type LibraryFilter = 'all' | 'processing' | 'error' | 'image' | 'pdf';
+
+export type AppView = 'library' | 'workspace';
+
 /** 单条识别分段:稳定 id 用于图文互链 */
 export interface OCRSegment {
     id: string;
@@ -22,6 +28,11 @@ export interface ScanPage {
     width: number;
     height: number;
     segments: OCRSegment[];
+}
+
+export interface DuplicateHint {
+    id: string;
+    title: string;
 }
 
 export interface DocumentScan {
@@ -47,6 +58,10 @@ export interface DocumentScan {
     segments?: OCRSegment[];
     pages?: ScanPage[];
     originalFile?: string;
+    tags: string[];
+    pinned: boolean;
+    contentHash?: string;
+    duplicateOf?: DuplicateHint;
     /** 仅存在于前端内存的临时条目(上传尚未拿到服务端 id) */
     isLocal?: boolean;
 }

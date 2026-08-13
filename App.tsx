@@ -1,69 +1,45 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-    Scan,
-    Sun,
-    Moon,
-    History,
-    Menu,
-    CheckCircle2,
-    AlertCircle,
-    Share,
-    UploadCloud,
-    ClipboardPaste,
-    Loader2,
-    Camera,
-    RotateCcw,
-} from './components/Icon';
-import Sidebar from './components/Sidebar';
-import ImageViewer from './components/ImageViewer';
-import TextPanel from './components/TextPanel';
-import EmptyState from './components/EmptyState';
+import AppShell from './components/AppShell';
+import { UploadCloud } from './components/Icon';
+import Library from './components/Library';
+import Workspace from './components/Workspace';
+import CommandPalette, { CommandAction } from './components/CommandPalette';
+import QueueDock from './components/QueueDock';
+import MobileNav from './components/MobileNav';
 import ToastStack, { ToastItem, ToastKind } from './components/Toast';
 import ConfirmDialog from './components/ConfirmDialog';
-import { DocumentScan, LayoutMode, OCRStatus } from './types';
-import {
-    fetchScans,
-    fetchScanDetail,
-    uploadForOCR,
-    saveScanText,
-    deleteScanById,
-    retryScan,
-    reflowScan,
-    pollScanUntilDone,
-} from './api';
-import { compressImageIfNeeded, countWords, formatBytes } from './utils';
-import { DEFAULT_IGNORE, MAX_UPLOAD_MB } from './constants';
+import { AppView, LayoutMode, LibraryFilter, OCRStatus, WorkspaceMode } from './types';
+import { DEFAULT_IGNORE } from './constants';
+import { downloadTextFile, isTypingTarget, lowConfidenceSegments, toMarkdown } from './utils';
+import { useTheme } from './hooks/useTheme';
+import { useScans } from './hooks/useScans';
+import { useUpload } from './hooks/useUpload';
 
 const App: React.FC = () => {
-    const [isDarkMode, setIsDarkMode] = useState(() => {
-        if (typeof window === 'undefined') return false;
-        const saved = localStorage.getItem('optictext_theme');
-        if (saved) return saved === 'dark';
-        return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
-    });
-    const [sidebarOpen, setSidebarOpen] = useState(typeof window !== 'undefined' ? window.innerWidth >= 1024 : true);
-    const [scans, setScans] = useState<DocumentScan[]>([]);
+    const { isDarkMode, toggleTheme } = useTheme();
+    const {
+        scans, setScans, isLoading, error, mergeScan, startPolling, loadHistory,
+        searchRemote, loadDetail, updateText, updateMeta, remove, removeMany, retry, reflow,
+    } = useScans();
+
+    const [view, setView] = useState<AppView>('library');
     const [selectedId, setSelectedId] = useState<string | null>(null);
-    const [isLoadingHistory, setIsLoadingHistory] = useState(true);
-    const [historyError, setHistoryError] = useState<string | null>(null);
-    const [isDragOver, setIsDragOver] = useState(false);
+    const [query, setQuery] = useState('');
+    const [filter, setFilter] = useState<LibraryFilter>('all');
+    const [tagFilter, setTagFilter] = useState<string | null>(null);
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [mode, setMode] = useState<WorkspaceMode>('proof');
     const [currentPage, setCurrentPage] = useState(0);
     const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
-    const [splitPct, setSplitPct] = useState(45);
+    const [splitPct, setSplitPct] = useState(48);
+    const [paletteOpen, setPaletteOpen] = useState(false);
     const [toasts, setToasts] = useState<ToastItem[]>([]);
     const [confirm, setConfirm] = useState<{ title: string; message: string; danger?: boolean; onConfirm: () => void } | null>(null);
     const [nowTs, setNowTs] = useState(Date.now());
 
-    const fileInputRef = useRef<HTMLInputElement>(null);
-    const cameraInputRef = useRef<HTMLInputElement>(null);
     const searchRef = useRef<HTMLInputElement>(null);
-    const pollingRef = useRef<Set<string>>(new Set());
     const ignoreTimer = useRef<number | null>(null);
-    const searchTimer = useRef<number | null>(null);
     const splitDrag = useRef(false);
-
-    const currentScan = scans.find(s => s.id === selectedId) || null;
-    const ignoreEnabled = !!currentScan && currentScan.ignoreHeader + currentScan.ignoreFooter > 0.001;
 
     const toast = useCallback((message: string, kind: ToastKind = 'info') => {
         const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -71,53 +47,32 @@ const App: React.FC = () => {
         window.setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000);
     }, []);
 
-    const mergeScan = useCallback((scan: DocumentScan) => {
-        setScans(prev => {
-            const idx = prev.findIndex(s => s.id === scan.id);
-            if (idx < 0) return [scan, ...prev];
-            const next = [...prev];
-            next[idx] = { ...next[idx], ...scan };
-            return next;
-        });
+    const openScan = useCallback((id: string) => {
+        setSelectedId(id);
+        setView('workspace');
+        setSelectedIds(new Set());
+        setPaletteOpen(false);
     }, []);
 
-    const startPolling = useCallback((id: string) => {
-        if (pollingRef.current.has(id)) return;
-        pollingRef.current.add(id);
-        void pollScanUntilDone(id, mergeScan, () => !pollingRef.current.has(id))
-            .catch(() => { /* 取消或网络错误由下一次刷新兜底 */ })
-            .finally(() => { pollingRef.current.delete(id); });
-    }, [mergeScan]);
+    const { isDragOver, fileInputRef, cameraInputRef, handleFileInput, handlePasteButton } = useUpload({
+        mergeScan,
+        startPolling,
+        setScans,
+        toast,
+        onUploaded: openScan,
+    });
 
-    const loadHistory = useCallback(async () => {
-        setIsLoadingHistory(true);
-        try {
-            const list = await fetchScans();
-            setScans(prev => {
-                const locals = prev.filter(s => s.isLocal);
-                const ids = new Set(list.map(s => s.id));
-                return [...locals.filter(s => !ids.has(s.id)), ...list];
-            });
-            setSelectedId(prev => prev ?? (list[0]?.id ?? null));
-            setHistoryError(null);
-            list.filter(s => s.status === OCRStatus.Processing).forEach(s => startPolling(s.id));
-        } catch (e: any) {
-            setHistoryError(e?.message || '加载历史记录失败');
-        } finally {
-            setIsLoadingHistory(false);
-        }
-    }, [startPolling]);
-
-    useEffect(() => { loadHistory(); }, [loadHistory]);
-
-    useEffect(() => {
-        document.documentElement.classList.toggle('dark', isDarkMode);
-        localStorage.setItem('optictext_theme', isDarkMode ? 'dark' : 'light');
-    }, [isDarkMode]);
+    const currentScan = scans.find(s => s.id === selectedId) || null;
+    const ignoreEnabled = !!currentScan && currentScan.ignoreHeader + currentScan.ignoreFooter > 0.001;
+    const queue = useMemo(
+        () => scans.filter(s => s.status === OCRStatus.Processing).sort((a, b) => a.date.localeCompare(b.date)),
+        [scans],
+    );
 
     useEffect(() => {
         setCurrentPage(0);
         setSelectedSegmentId(null);
+        setMode('proof');
     }, [selectedId]);
 
     useEffect(() => {
@@ -127,197 +82,81 @@ const App: React.FC = () => {
         return () => window.clearInterval(timer);
     }, [scans]);
 
-    const handleScanSelect = (id: string) => {
-        setSelectedId(id);
-        if (window.innerWidth < 1024) setSidebarOpen(false);
-    };
-
     useEffect(() => {
         const scan = scans.find(s => s.id === selectedId);
         if (!scan || scan.isLocal || scan.segments) return;
         if (scan.status !== OCRStatus.Ready && scan.status !== OCRStatus.Processing) return;
         let cancelled = false;
-        fetchScanDetail(scan.id)
-            .then(detail => {
-                if (!cancelled) mergeScan(detail);
-            })
-            .catch(() => { /* 详情非关键 */ });
+        loadDetail(scan.id).catch(() => { /* 详情非关键 */ });
         return () => { cancelled = true; };
-    }, [selectedId, scans, mergeScan]);
+    }, [selectedId, scans, loadDetail]);
 
-    const enqueueUpload = useCallback((rawFile: File) => {
-        const isPdf = rawFile.type === 'application/pdf' || rawFile.name.toLowerCase().endsWith('.pdf');
-        const isImage = rawFile.type.startsWith('image/');
-        if (!isPdf && !isImage) {
-            toast(`不支持的文件类型:${rawFile.name}`, 'error');
-            return;
-        }
-        if (rawFile.size > MAX_UPLOAD_MB * 1024 * 1024) {
-            toast(`文件过大,上限 ${MAX_UPLOAD_MB}MB`, 'error');
-            return;
-        }
-
-        const tempId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const blobUrl = isImage ? URL.createObjectURL(rawFile) : '';
-        const tempScan: DocumentScan = {
-            id: tempId,
-            title: rawFile.name,
-            date: new Date().toISOString(),
-            thumbnailUrl: blobUrl,
-            fullImageUrl: blobUrl,
-            extractedText: '正在上传…',
-            status: OCRStatus.Processing,
-            fileSize: rawFile.size,
-            confidence: 0,
-            processingTime: 0,
-            imageWidth: 0,
-            imageHeight: 0,
-            pageCount: 1,
-            pageDone: 0,
-            layoutMode: 'paragraph',
-            ignoreHeader: DEFAULT_IGNORE,
-            ignoreFooter: DEFAULT_IGNORE,
-            isLocal: true,
-        };
-        setScans(prev => [tempScan, ...prev]);
-        setSelectedId(tempId);
-
-        void (async () => {
-            try {
-                const file = isImage ? await compressImageIfNeeded(rawFile) : rawFile;
-                const scan = await uploadForOCR(file);
-                setScans(prev => prev.map(s => (s.id === tempId ? scan : s)));
-                setSelectedId(cur => (cur === tempId ? scan.id : cur));
-                if (blobUrl) URL.revokeObjectURL(blobUrl);
-                startPolling(scan.id);
-            } catch (e: any) {
-                setScans(prev => prev.map(s => (
-                    s.id === tempId
-                        ? {
-                            ...s,
-                            status: OCRStatus.Error,
-                            errorMessage: e?.message || '未知错误',
-                            extractedText: `识别失败:${e?.message || '未知错误'}`,
-                        }
-                        : s
-                )));
-                toast(e?.message || '上传失败', 'error');
-            }
-        })();
-    }, [startPolling, toast]);
-
-    const processFiles = useCallback((files: File[]) => {
-        files.forEach(enqueueUpload);
-    }, [enqueueUpload]);
-
-    const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-        const files = Array.from(event.target.files || []);
-        if (files.length) processFiles(files);
-        event.target.value = '';
+    const handleQuery = (q: string) => {
+        setQuery(q);
+        searchRemote(q);
     };
 
-    useEffect(() => {
-        let dragCounter = 0;
-        const hasFiles = (e: DragEvent) => e.dataTransfer?.types?.includes('Files');
-        const onDragEnter = (e: DragEvent) => {
-            if (!hasFiles(e)) return;
-            e.preventDefault();
-            dragCounter++;
-            setIsDragOver(true);
-        };
-        const onDragOver = (e: DragEvent) => { if (hasFiles(e)) e.preventDefault(); };
-        const onDragLeave = (e: DragEvent) => {
-            if (!hasFiles(e)) return;
-            dragCounter = Math.max(0, dragCounter - 1);
-            if (dragCounter === 0) setIsDragOver(false);
-        };
-        const onDrop = (e: DragEvent) => {
-            if (!hasFiles(e)) return;
-            e.preventDefault();
-            dragCounter = 0;
-            setIsDragOver(false);
-            const files = Array.from(e.dataTransfer?.files || []);
-            if (files.length) processFiles(files);
-        };
-        window.addEventListener('dragenter', onDragEnter);
-        window.addEventListener('dragover', onDragOver);
-        window.addEventListener('dragleave', onDragLeave);
-        window.addEventListener('drop', onDrop);
-        return () => {
-            window.removeEventListener('dragenter', onDragEnter);
-            window.removeEventListener('dragover', onDragOver);
-            window.removeEventListener('dragleave', onDragLeave);
-            window.removeEventListener('drop', onDrop);
-        };
-    }, [processFiles]);
-
-    useEffect(() => {
-        const handleGlobalPaste = (event: ClipboardEvent) => {
-            const items = event.clipboardData?.items;
-            if (!items) return;
-            for (const item of items) {
-                if (item.type.startsWith('image/')) {
-                    const blob = item.getAsFile();
-                    if (blob) {
-                        const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-                        enqueueUpload(new File([blob], `粘贴图片_${stamp}.png`, { type: item.type }));
-                        return;
-                    }
-                }
-            }
-        };
-        window.addEventListener('paste', handleGlobalPaste);
-        return () => window.removeEventListener('paste', handleGlobalPaste);
-    }, [enqueueUpload]);
-
-    const handlePasteButton = async () => {
-        try {
-            if (!navigator.clipboard || !(navigator.clipboard as any).read) {
-                throw new Error('Clipboard API unavailable');
-            }
-            const clipboardItems = await (navigator.clipboard as any).read();
-            for (const item of clipboardItems) {
-                const imageType = item.types.find((type: string) => type.startsWith('image/'));
-                if (imageType) {
-                    const blob = await item.getType(imageType);
-                    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-                    enqueueUpload(new File([blob], `粘贴图片_${stamp}.png`, { type: imageType }));
-                    return;
-                }
-            }
-            toast('剪贴板中没有图片。', 'info');
-        } catch {
-            toast('请直接按 Ctrl+V(Mac 为 Cmd+V)粘贴图片。', 'info');
-        }
-    };
-
-    const handleTextUpdate = useCallback(async (id: string, newText: string) => {
-        setScans(prev => prev.map(s => (s.id === id ? { ...s, extractedText: newText } : s)));
-        if (id.startsWith('local-')) return;
-        await saveScanText(id, newText);
+    const goLibrary = useCallback(() => {
+        setView('library');
+        setSelectedIds(new Set());
     }, []);
+
+    const handleRename = async (id: string, title: string) => {
+        try {
+            await updateMeta(id, { title });
+        } catch (e: any) {
+            toast(e?.message || '改名失败', 'error');
+        }
+    };
+
+    const handleTogglePin = async (id: string) => {
+        const scan = scans.find(s => s.id === id);
+        if (!scan) return;
+        try {
+            await updateMeta(id, { pinned: !scan.pinned });
+        } catch (e: any) {
+            toast(e?.message || '置顶失败', 'error');
+        }
+    };
+
+    const handleAddTag = async (ids: string[], tag: string) => {
+        try {
+            for (const id of ids) {
+                const scan = scans.find(s => s.id === id);
+                if (!scan) continue;
+                const tags = Array.from(new Set([...(scan.tags || []), tag])).slice(0, 12);
+                await updateMeta(id, { tags });
+            }
+        } catch (e: any) {
+            toast(e?.message || '打标签失败', 'error');
+        }
+    };
+
+    const handleRemoveTag = async (id: string, tag: string) => {
+        const scan = scans.find(s => s.id === id);
+        if (!scan) return;
+        try {
+            await updateMeta(id, { tags: (scan.tags || []).filter(t => t !== tag) });
+        } catch (e: any) {
+            toast(e?.message || '移除标签失败', 'error');
+        }
+    };
 
     const performDelete = async (id: string) => {
         const scan = scans.find(s => s.id === id);
         if (!scan) return;
-        if (!scan.isLocal) {
-            try {
-                await deleteScanById(id);
-            } catch (err: any) {
-                toast(`删除失败:${err?.message || '未知错误'}`, 'error');
-                return;
+        try {
+            await remove(id, scan.isLocal);
+            if (selectedId === id) {
+                setSelectedId(null);
+                setView('library');
             }
+        } catch (err: any) {
+            toast(`删除失败:${err?.message || '未知错误'}`, 'error');
         }
-        pollingRef.current.delete(id);
-        setScans(prev => {
-            const next = prev.filter(s => s.id !== id);
-            if (selectedId === id) setSelectedId(next[0]?.id ?? null);
-            return next;
-        });
     };
 
-    const handleDeleteScan = (id: string, e: React.MouseEvent) => {
-        e.stopPropagation();
+    const askDelete = (id: string) => {
         const scan = scans.find(s => s.id === id);
         if (!scan) return;
         setConfirm({
@@ -328,22 +167,39 @@ const App: React.FC = () => {
         });
     };
 
+    const askBatchDelete = () => {
+        const ids = [...selectedIds];
+        if (!ids.length) return;
+        setConfirm({
+            title: '批量删除',
+            message: `确定删除选中的 ${ids.length} 条记录吗?此操作不可恢复。`,
+            danger: true,
+            onConfirm: () => {
+                setConfirm(null);
+                void removeMany(ids).then(() => {
+                    setSelectedIds(new Set());
+                    if (selectedId && ids.includes(selectedId)) {
+                        setSelectedId(null);
+                        setView('library');
+                    }
+                }).catch((err: any) => toast(`删除失败:${err?.message || '未知错误'}`, 'error'));
+            },
+        });
+    };
+
     const handleRetry = async () => {
         if (!currentScan || currentScan.isLocal) return;
         try {
-            const scan = await retryScan(currentScan.id);
-            mergeScan(scan);
-            startPolling(scan.id);
+            await retry(currentScan.id);
         } catch (e: any) {
             toast(e?.message || '无法重新识别', 'error');
         }
     };
 
-    const handleLayoutMode = async (mode: LayoutMode) => {
+    const handleLayoutMode = async (layout: LayoutMode) => {
         if (!currentScan || currentScan.isLocal) return;
         try {
-            const scan = await reflowScan(currentScan.id, { layout_mode: mode });
-            mergeScan(scan);
+            await reflow(currentScan.id, { layout_mode: layout });
         } catch (e: any) {
             toast(e?.message || '切换排版失败', 'error');
         }
@@ -355,9 +211,7 @@ const App: React.FC = () => {
         if (currentScan.isLocal) return;
         if (ignoreTimer.current) window.clearTimeout(ignoreTimer.current);
         ignoreTimer.current = window.setTimeout(() => {
-            void reflowScan(currentScan.id, { ignore_header: header, ignore_footer: footer })
-                .then(mergeScan)
-                .catch(() => { /* 拖动过程中失败可忽略 */ });
+            void reflow(currentScan.id, { ignore_header: header, ignore_footer: footer }).catch(() => { /* 拖动过程中失败可忽略 */ });
         }, 450);
     };
 
@@ -372,66 +226,50 @@ const App: React.FC = () => {
         const seg = currentScan?.pages?.flatMap(p => p.segments).find(s => s.id === id)
             || currentScan?.segments?.find(s => s.id === id);
         if (seg && typeof seg.page === 'number') setCurrentPage(seg.page);
-        const text = seg?.text;
-        if (text && navigator.clipboard && window.isSecureContext) {
-            /* 单击只定位;复制交给双击 */
-        }
     };
 
-    const handleExport = () => {
+    const jumpLow = useCallback((direction: 1 | -1) => {
         if (!currentScan) return;
-        const element = document.createElement('a');
-        const file = new Blob([currentScan.extractedText], { type: 'text/plain;charset=utf-8' });
-        element.href = URL.createObjectURL(file);
-        const filename = currentScan.title.replace(/\.[^.]+$/, '') || '识别结果';
-        element.download = `${filename}_识别文本.txt`;
-        document.body.appendChild(element);
-        element.click();
-        document.body.removeChild(element);
-        URL.revokeObjectURL(element.href);
-    };
-
-    const handleSearchChange = (q: string) => {
-        if (searchTimer.current) window.clearTimeout(searchTimer.current);
-        if (!q.trim()) {
-            fetchScans().then(list => {
-                setScans(prev => {
-                    const locals = prev.filter(s => s.isLocal || s.status === OCRStatus.Processing);
-                    const ids = new Set(list.map(s => s.id));
-                    return [...locals.filter(s => !ids.has(s.id)), ...list];
-                });
-            }).catch(() => { /* 保留当前列表 */ });
+        const lows = lowConfidenceSegments(
+            currentScan,
+            ignoreEnabled ? currentScan.ignoreHeader : 0,
+            ignoreEnabled ? currentScan.ignoreFooter : 0,
+        );
+        if (!lows.length) {
+            toast('没有存疑片段', 'info');
             return;
         }
-        searchTimer.current = window.setTimeout(() => {
-            fetchScans(q).then(list => {
-                setScans(prev => {
-                    const locals = prev.filter(s => s.isLocal || s.status === OCRStatus.Processing);
-                    const ids = new Set(list.map(s => s.id));
-                    return [...locals.filter(s => !ids.has(s.id)), ...list];
-                });
-            }).catch(() => { /* 本地过滤仍可用 */ });
-        }, 300);
-    };
+        const idx = lows.findIndex(s => s.id === selectedSegmentId);
+        const nextIndex = idx < 0
+            ? (direction === 1 ? 0 : lows.length - 1)
+            : (idx + direction + lows.length) % lows.length;
+        const next = lows[nextIndex];
+        setSelectedSegmentId(next.id);
+        if (typeof next.page === 'number') setCurrentPage(next.page);
+        setMode('proof');
+        setView('workspace');
+    }, [currentScan, ignoreEnabled, selectedSegmentId, toast]);
 
-    useEffect(() => {
-        const onKey = (e: KeyboardEvent) => {
-            const tag = (e.target as HTMLElement)?.tagName;
-            const typing = tag === 'INPUT' || tag === 'TEXTAREA';
-            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-                e.preventDefault();
-                toast('编辑内容会自动保存', 'success');
-            }
-            if (e.key === 'Escape') setSidebarOpen(false);
-            if (e.key === '/' && !typing) {
-                e.preventDefault();
-                setSidebarOpen(true);
-                searchRef.current?.focus();
-            }
-        };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-    }, [toast]);
+    const handleExportTxt = useCallback(() => {
+        if (!currentScan) return;
+        const filename = (currentScan.title.replace(/\.[^.]+$/, '') || '识别结果') + '_识别文本.txt';
+        downloadTextFile(currentScan.extractedText || '', filename);
+    }, [currentScan]);
+
+    const handleExportMd = useCallback(() => {
+        if (!currentScan) return;
+        const filename = (currentScan.title.replace(/\.[^.]+$/, '') || '识别结果') + '.md';
+        downloadTextFile(toMarkdown(currentScan), filename, 'text/markdown;charset=utf-8');
+    }, [currentScan]);
+
+    const toggleSelect = (id: string) => {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
 
     useEffect(() => {
         const onMove = (e: MouseEvent) => {
@@ -440,7 +278,7 @@ const App: React.FC = () => {
             if (!main) return;
             const rect = main.getBoundingClientRect();
             const pct = ((e.clientX - rect.left) / rect.width) * 100;
-            setSplitPct(Math.min(70, Math.max(28, pct)));
+            setSplitPct(Math.min(72, Math.max(28, pct)));
         };
         const onUp = () => { splitDrag.current = false; };
         window.addEventListener('mousemove', onMove);
@@ -451,257 +289,154 @@ const App: React.FC = () => {
         };
     }, []);
 
-    const queue = useMemo(
-        () => scans.filter(s => s.status === OCRStatus.Processing).sort((a, b) => a.date.localeCompare(b.date)),
-        [scans],
-    );
-    const running = queue[0];
-    const elapsed = running ? Math.max(0, Math.round((nowTs - new Date(running.date).getTime()) / 1000)) : 0;
+    const actions: CommandAction[] = useMemo(() => [
+        { id: 'upload', label: '上传文件', hint: 'U', run: () => fileInputRef.current?.click() },
+        { id: 'camera', label: '拍照识别', run: () => cameraInputRef.current?.click() },
+        { id: 'paste', label: '粘贴截图', hint: 'Ctrl+V', run: () => { void handlePasteButton(); } },
+        { id: 'theme', label: isDarkMode ? '切换浅色主题' : '切换深色主题', run: toggleTheme },
+        { id: 'library', label: '打开文档库', run: goLibrary },
+        { id: 'proof', label: '校对模式', run: () => { if (selectedId) { setMode('proof'); setView('workspace'); } } },
+        { id: 'read', label: '阅读模式', run: () => { if (selectedId) { setMode('read'); setView('workspace'); } } },
+        { id: 'image', label: '原图模式', run: () => { if (selectedId) { setMode('image'); setView('workspace'); } } },
+        { id: 'low', label: '下一条存疑', hint: 'J', run: () => jumpLow(1) },
+        { id: 'txt', label: '导出 TXT', run: handleExportTxt },
+        { id: 'md', label: '导出 Markdown', run: handleExportMd },
+    ], [cameraInputRef, fileInputRef, goLibrary, handleExportMd, handleExportTxt, handlePasteButton, isDarkMode, jumpLow, selectedId, toggleTheme]);
 
-    const wordCount = currentScan ? countWords(currentScan.extractedText) : 0;
-    const confidenceColor = currentScan
-        ? currentScan.confidence >= 90
-            ? 'text-emerald-600 dark:text-emerald-400'
-            : currentScan.confidence >= 70
-                ? 'text-amber-600 dark:text-amber-400'
-                : 'text-red-600 dark:text-red-400'
-        : '';
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            const typing = isTypingTarget(e.target);
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+                e.preventDefault();
+                setPaletteOpen(v => !v);
+                return;
+            }
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+                e.preventDefault();
+                toast('编辑内容会自动保存', 'success');
+                return;
+            }
+            if (e.key === 'Escape') {
+                if (paletteOpen) { setPaletteOpen(false); return; }
+                if (view === 'workspace') goLibrary();
+                return;
+            }
+            if (e.key === '/' && !typing) {
+                e.preventDefault();
+                if (view === 'library') searchRef.current?.focus();
+                else setPaletteOpen(true);
+                return;
+            }
+            if (typing || paletteOpen) return;
+            if (view === 'workspace' && (e.key === 'j' || e.key === 'J')) {
+                e.preventDefault();
+                jumpLow(1);
+            }
+            if (view === 'workspace' && (e.key === 'k' || e.key === 'K')) {
+                e.preventDefault();
+                jumpLow(-1);
+            }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [jumpLow, paletteOpen, toast, view]);
 
     return (
-        <div className="flex flex-col h-screen w-full bg-bg-cream dark:bg-bg-dark font-sans transition-colors duration-300">
-            <input ref={fileInputRef} type="file" className="hidden" accept="image/*,.pdf,application/pdf" multiple onChange={handleFileUpload} />
-            <input ref={cameraInputRef} type="file" className="hidden" accept="image/*" capture="environment" onChange={handleFileUpload} />
+        <AppShell
+            isDarkMode={isDarkMode}
+            onToggleTheme={toggleTheme}
+            onLibrary={goLibrary}
+            onPaste={() => void handlePasteButton()}
+            onUpload={() => fileInputRef.current?.click()}
+            onCamera={() => cameraInputRef.current?.click()}
+            onOpenPalette={() => setPaletteOpen(true)}
+        >
+            <input ref={fileInputRef} type="file" className="hidden" accept="image/*,.pdf,application/pdf" multiple onChange={handleFileInput} />
+            <input ref={cameraInputRef} type="file" className="hidden" accept="image/*" capture="environment" onChange={handleFileInput} />
 
-            <header className="flex items-center justify-between whitespace-nowrap border-b border-border-sepia dark:border-border-bronze px-4 sm:px-6 py-3 bg-bg-cream dark:bg-surface-dark z-30 shrink-0 w-full relative shadow-sm">
-                <div className="flex items-center gap-3 sm:gap-4">
-                    <button
-                        className="lg:hidden p-2 -ml-2 text-text-brown dark:text-text-cream hover:bg-black/5 dark:hover:bg-white/10 rounded-md"
-                        onClick={() => setSidebarOpen(true)}
-                        aria-label="打开菜单"
-                    >
-                        <Menu className="w-5 h-5" />
-                    </button>
-                    <div className="flex items-center justify-center p-1.5 sm:p-2 bg-gradient-to-br from-primary to-primary-dark rounded-md text-white shadow-lg shadow-primary/20">
-                        <Scan className="w-4 h-4 sm:w-5 sm:h-5" />
-                    </div>
-                    <div>
-                        <h2 className="text-base sm:text-lg font-bold font-serif italic tracking-wide text-text-brown dark:text-primary">
-                            OpticText <span className="hidden sm:inline font-sans font-normal text-text-brown/50 dark:text-white/40 not-italic text-sm ml-1">文字识别</span>
-                        </h2>
-                    </div>
-                </div>
-
-                <div className="flex gap-2 sm:gap-3">
-                    <button
-                        onClick={handlePasteButton}
-                        className="flex cursor-pointer items-center gap-2 px-3 py-1.5 sm:px-4 sm:py-2 rounded-md bg-surface-light dark:bg-white/5 border border-border-sepia dark:border-border-bronze hover:border-primary text-text-brown dark:text-text-cream"
-                        title="从剪贴板粘贴图片(或直接按 Ctrl+V)"
-                    >
-                        <ClipboardPaste className="w-4 h-4" />
-                        <span className="hidden sm:inline text-sm font-medium">粘贴</span>
-                    </button>
-                    <button
-                        onClick={() => cameraInputRef.current?.click()}
-                        className="flex cursor-pointer items-center gap-2 px-3 py-1.5 sm:px-4 sm:py-2 rounded-md bg-surface-light dark:bg-white/5 border border-border-sepia dark:border-border-bronze hover:border-primary text-text-brown dark:text-text-cream"
-                        title="调用相机拍照识别"
-                    >
-                        <Camera className="w-4 h-4" />
-                        <span className="hidden sm:inline text-sm font-medium">拍照</span>
-                    </button>
-                    <button
-                        onClick={() => fileInputRef.current?.click()}
-                        className="flex cursor-pointer items-center gap-2 px-3 py-1.5 sm:px-4 sm:py-2 rounded-md bg-surface-light dark:bg-white/5 border border-border-sepia dark:border-border-bronze hover:border-primary text-text-brown dark:text-text-cream"
-                        title="上传图片或 PDF"
-                    >
-                        <UploadCloud className="w-4 h-4" />
-                        <span className="hidden sm:inline text-sm font-medium">上传</span>
-                    </button>
-                    <div className="hidden sm:block w-px h-8 bg-border-sepia dark:bg-border-bronze mx-1 self-center"></div>
-                    <button
-                        onClick={() => setIsDarkMode(!isDarkMode)}
-                        className="flex items-center justify-center rounded-lg w-9 h-9 sm:w-10 sm:h-10 hover:bg-surface-light dark:hover:bg-white/10 text-primary"
-                        title="切换深色/浅色主题"
-                    >
-                        {isDarkMode ? <Sun className="w-4 h-4 sm:w-5 sm:h-5" /> : <Moon className="w-4 h-4 sm:w-5 sm:h-5" />}
-                    </button>
-                </div>
-            </header>
-
-            {queue.length > 0 && running && (
-                <div className="px-4 sm:px-6 py-1.5 bg-primary/10 border-b border-primary/20 text-primary text-xs sm:text-sm font-medium flex items-center gap-2 shrink-0">
-                    <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                    <span className="truncate">
-                        队列 {1}/{queue.length} · {running.title}
-                        {running.pageCount > 1 ? ` · 第 ${Math.max(1, running.pageDone)}/${running.pageCount} 页` : ''}
-                        {elapsed > 0 ? ` · 已耗时 ${elapsed}s` : ''}
-                    </span>
-                </div>
-            )}
-
-            <div className="border-b border-border-sepia dark:border-border-bronze bg-surface-light dark:bg-surface-dark-lighter px-4 sm:px-6 py-2 sm:py-3 flex flex-wrap justify-between items-center gap-3 shrink-0 z-20">
-                <div className="flex items-center gap-3 min-w-0">
-                    <button
-                        onClick={() => setSidebarOpen(!sidebarOpen)}
-                        className={`hidden lg:flex items-center justify-center ${sidebarOpen ? 'text-primary' : 'text-text-brown/60 dark:text-white/50 hover:text-primary'}`}
-                        title={sidebarOpen ? '收起历史记录' : '展开历史记录'}
-                    >
-                        <History className="w-5 h-5" />
-                    </button>
-
-                    {currentScan ? (
-                        <div className="flex flex-col min-w-0">
-                            <div className="flex items-center gap-2 sm:gap-3">
-                                <h1 className="text-base sm:text-lg font-bold leading-tight tracking-tight text-text-brown dark:text-text-cream truncate max-w-[150px] sm:max-w-md">
-                                    {currentScan.title}
-                                </h1>
-                                {currentScan.status === OCRStatus.Ready && (
-                                    <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] sm:text-xs font-bold text-emerald-700 dark:text-emerald-400 border border-emerald-500/20">
-                                        <CheckCircle2 className="w-3 h-3" />
-                                        <span className="hidden sm:inline">识别完成</span>
-                                    </span>
-                                )}
-                                {currentScan.status === OCRStatus.Processing && (
-                                    <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] sm:text-xs font-bold text-primary border border-primary/20">
-                                        <Loader2 className="w-3 h-3 animate-spin" />
-                                        <span className="hidden sm:inline">
-                                            {currentScan.pageCount > 1
-                                                ? `${currentScan.pageDone}/${currentScan.pageCount} 页`
-                                                : '识别中…'}
-                                        </span>
-                                    </span>
-                                )}
-                                {currentScan.status === OCRStatus.Error && (
-                                    <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] sm:text-xs font-bold text-red-600 border border-red-500/20">
-                                        <AlertCircle className="w-3 h-3" />
-                                        失败
-                                    </span>
-                                )}
-                            </div>
-                            <p className="text-text-brown/50 dark:text-white/40 text-[10px] sm:text-xs font-medium font-mono mt-0.5 truncate">
-                                {formatBytes(currentScan.fileSize)} · {wordCount} 字
-                                {currentScan.status === OCRStatus.Ready && (
-                                    <>
-                                        {' · '}
-                                        <span className={confidenceColor}>置信度 {currentScan.confidence}%</span>
-                                        {currentScan.processingTime > 0 && ` · 耗时 ${currentScan.processingTime.toFixed(1)}s`}
-                                        {currentScan.pageCount > 1 && ` · 共 ${currentScan.pageCount} 页`}
-                                    </>
-                                )}
-                            </p>
-                        </div>
-                    ) : (
-                        <h1 className="text-base sm:text-lg font-bold text-text-brown/40 dark:text-white/30">
-                            {isLoadingHistory ? '正在加载历史记录…' : '暂无文档'}
-                        </h1>
-                    )}
-                </div>
-
-                {currentScan && (
-                    <div className="flex items-center gap-2">
-                        {currentScan.status === OCRStatus.Error && !currentScan.isLocal && (
-                            <button
-                                onClick={() => void handleRetry()}
-                                className="flex items-center gap-1 px-3 h-8 sm:h-9 rounded-md border border-primary/30 text-primary text-xs sm:text-sm font-bold"
-                            >
-                                <RotateCcw className="w-3.5 h-3.5" />
-                                重新识别
-                            </button>
-                        )}
-                        <button
-                            onClick={handleExport}
-                            className="flex cursor-pointer items-center gap-2 justify-center rounded-md h-8 sm:h-9 px-3 sm:px-5 bg-gradient-to-r from-primary to-primary-dark text-white text-xs sm:text-sm font-bold shadow-lg shadow-primary/20"
-                            title="导出为 TXT 文本文件"
-                        >
-                            <span>导出 TXT</span>
-                            <Share className="w-3.5 h-3.5" />
-                        </button>
-                    </div>
+            <main className="flex-1 min-h-0 flex flex-col overflow-hidden">
+                {view === 'workspace' && currentScan ? (
+                    <Workspace
+                        scan={currentScan}
+                        mode={mode}
+                        onMode={setMode}
+                        currentPage={currentPage}
+                        onPageChange={setCurrentPage}
+                        selectedSegmentId={selectedSegmentId}
+                        onSegmentClick={handleSegmentClick}
+                        onJumpLow={jumpLow}
+                        splitPct={splitPct}
+                        onSplitStart={() => { splitDrag.current = true; }}
+                        ignoreEnabled={ignoreEnabled}
+                        onIgnoreChange={handleIgnoreChange}
+                        onToggleIgnore={handleToggleIgnore}
+                        onLayoutMode={handleLayoutMode}
+                        onUpdateText={updateText}
+                        onRetry={currentScan.isLocal ? undefined : handleRetry}
+                        onBack={goLibrary}
+                        onRename={title => void handleRename(currentScan.id, title)}
+                        onTogglePin={() => void handleTogglePin(currentScan.id)}
+                        onAddTag={tag => void handleAddTag([currentScan.id], tag)}
+                        onRemoveTag={tag => void handleRemoveTag(currentScan.id, tag)}
+                        onExportTxt={handleExportTxt}
+                        onToast={toast}
+                    />
+                ) : (
+                    <Library
+                        scans={scans}
+                        isLoading={isLoading}
+                        error={error}
+                        query={query}
+                        onQueryChange={handleQuery}
+                        filter={filter}
+                        onFilter={setFilter}
+                        tagFilter={tagFilter}
+                        onTagFilter={setTagFilter}
+                        selectedIds={selectedIds}
+                        onToggleSelect={toggleSelect}
+                        onClearSelect={() => setSelectedIds(new Set())}
+                        onSelectAll={ids => setSelectedIds(new Set(ids))}
+                        onOpen={openScan}
+                        onDelete={askDelete}
+                        onBatchDelete={askBatchDelete}
+                        onRename={(id, title) => void handleRename(id, title)}
+                        onTogglePin={id => void handleTogglePin(id)}
+                        onAddTag={(ids, tag) => void handleAddTag(ids, tag)}
+                        onRetryHistory={() => void loadHistory()}
+                        onUpload={() => fileInputRef.current?.click()}
+                        onPaste={() => void handlePasteButton()}
+                        onCamera={() => cameraInputRef.current?.click()}
+                        searchRef={searchRef}
+                    />
                 )}
-            </div>
-
-            {historyError && (
-                <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-2 bg-red-500/10 border-b border-red-500/20 text-red-700 dark:text-red-400 text-sm shrink-0">
-                    <span className="flex items-center gap-2 min-w-0">
-                        <AlertCircle className="w-4 h-4 shrink-0" />
-                        <span className="truncate">历史记录加载失败:{historyError}</span>
-                    </span>
-                    <button onClick={loadHistory} className="shrink-0 underline font-semibold">重试</button>
-                </div>
-            )}
-
-            <main className="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
-                <Sidebar
-                    ref={searchRef}
-                    scans={scans}
-                    selectedId={selectedId}
-                    onSelect={handleScanSelect}
-                    onDelete={handleDeleteScan}
-                    isOpen={sidebarOpen}
-                    onClose={() => setSidebarOpen(false)}
-                    isLoading={isLoadingHistory}
-                    onSearchChange={handleSearchChange}
-                />
-
-                <div id="workspace-split" className="flex-1 flex flex-col lg:flex-row w-full overflow-hidden relative z-0">
-                    {currentScan ? (
-                        <>
-                            <div
-                                className="split-left"
-                                style={{ ['--split' as string]: `${splitPct}%` } as React.CSSProperties}
-                            >
-                                <ImageViewer
-                                    scan={currentScan}
-                                    currentPage={currentPage}
-                                    onPageChange={setCurrentPage}
-                                    selectedSegmentId={selectedSegmentId}
-                                    onSegmentClick={handleSegmentClick}
-                                    ignoreHeader={currentScan.ignoreHeader}
-                                    ignoreFooter={currentScan.ignoreFooter}
-                                    onIgnoreChange={handleIgnoreChange}
-                                    ignoreEnabled={ignoreEnabled}
-                                />
-                            </div>
-                            <div
-                                className="hidden lg:block w-1.5 cursor-col-resize bg-border-sepia dark:bg-border-bronze hover:bg-primary/50 shrink-0"
-                                onMouseDown={() => { splitDrag.current = true; }}
-                                title="拖动调整分栏"
-                            />
-                            <TextPanel
-                                scan={currentScan}
-                                onUpdate={handleTextUpdate}
-                                selectedSegmentId={selectedSegmentId}
-                                onSegmentClick={handleSegmentClick}
-                                currentPage={currentPage}
-                                layoutMode={currentScan.layoutMode}
-                                onLayoutMode={handleLayoutMode}
-                                ignoreEnabled={ignoreEnabled}
-                                onToggleIgnore={handleToggleIgnore}
-                                onRetry={currentScan.isLocal ? undefined : handleRetry}
-                                onCopyLine={(msg) => toast(msg, 'error')}
-                            />
-                        </>
-                    ) : (
-                        <EmptyState
-                            isLoading={isLoadingHistory}
-                            onUpload={() => fileInputRef.current?.click()}
-                            onPaste={() => void handlePasteButton()}
-                            onCamera={() => cameraInputRef.current?.click()}
-                        />
-                    )}
-                </div>
             </main>
 
+            <QueueDock queue={queue} nowTs={nowTs} onOpen={openScan} />
+            <MobileNav
+                view={view}
+                onLibrary={goLibrary}
+                onCamera={() => cameraInputRef.current?.click()}
+                onSearch={() => setPaletteOpen(true)}
+            />
+
             {isDragOver && (
-                <div className="fixed inset-0 z-[100] bg-primary/20 backdrop-blur-sm flex items-center justify-center pointer-events-none">
-                    <div className="bg-bg-cream dark:bg-surface-dark border-2 border-dashed border-primary rounded-2xl px-12 py-10 text-center shadow-2xl">
+                <div className="fixed inset-0 z-[100] bg-primary/15 backdrop-blur-sm flex items-center justify-center pointer-events-none">
+                    <div className="bg-surface dark:bg-surface-dark border-2 border-dashed border-primary rounded-2xl px-12 py-10 text-center shadow-2xl">
                         <UploadCloud className="w-12 h-12 text-primary mx-auto mb-3" />
-                        <p className="text-lg font-bold text-text-brown dark:text-text-cream">松开鼠标开始识别</p>
-                        <p className="text-sm text-text-brown/60 dark:text-white/50 mt-1">支持图片与 PDF,可一次拖入多个文件</p>
+                        <p className="text-lg font-semibold">松开鼠标开始识别</p>
+                        <p className="text-sm text-muted mt-1">支持图片与 PDF,可一次拖入多个文件</p>
                     </div>
                 </div>
             )}
 
-            <ToastStack toasts={toasts} onDismiss={(id) => setToasts(prev => prev.filter(t => t.id !== id))} />
+            <CommandPalette
+                open={paletteOpen}
+                onClose={() => setPaletteOpen(false)}
+                scans={scans}
+                actions={actions}
+                onOpenScan={openScan}
+            />
+            <ToastStack toasts={toasts} onDismiss={id => setToasts(prev => prev.filter(t => t.id !== id))} />
             {confirm && (
                 <ConfirmDialog
                     title={confirm.title}
@@ -711,7 +446,7 @@ const App: React.FC = () => {
                     onCancel={() => setConfirm(null)}
                 />
             )}
-        </div>
+        </AppShell>
     );
 };
 

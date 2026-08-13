@@ -17,3 +17,8 @@ export const COMPRESS_MAX_SIDE = 2500;
 export const COMPRESS_TRIGGER_BYTES = 1.5 * 1024 * 1024;
 
 export const DEFAULT_IGNORE = 0.08;
+
+/** 低于该值(0-1)的识别框视为存疑 */
+export const LOW_CONFIDENCE = 0.7;
+
+export const SUGGESTED_TAGS = ['发票', '合同', '笔记', '证件', '截图'];
