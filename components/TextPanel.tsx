@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Type, Save, FileText, Copy, Trash2, CheckCircle2, AlertCircle, Loader2, RotateCcw } from './Icon';
-import { DocumentScan, LayoutMode, OCRSegment, OCRStatus } from '../types';
+import { DocumentScan, LayoutMode, OCRStatus } from '../types';
 import { visibleSegments } from '../utils';
 import { downloadSearchablePdf } from '../api';
 
@@ -16,6 +16,7 @@ interface TextPanelProps {
     onToggleIgnore: () => void;
     onRetry?: () => void;
     onCopyLine?: (text: string) => void;
+    reading?: boolean;
 }
 
 type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
@@ -23,7 +24,7 @@ const AUTOSAVE_DELAY_MS = 1200;
 
 const TextPanel: React.FC<TextPanelProps> = ({
     scan, onUpdate, selectedSegmentId, onSegmentClick, currentPage,
-    layoutMode, onLayoutMode, ignoreEnabled, onToggleIgnore, onRetry, onCopyLine,
+    layoutMode, onLayoutMode, ignoreEnabled, onToggleIgnore, onRetry, onCopyLine, reading,
 }) => {
     const [text, setText] = useState(scan.extractedText);
     const [saveState, setSaveState] = useState<SaveState>('idle');
@@ -39,14 +40,6 @@ const TextPanel: React.FC<TextPanelProps> = ({
     useEffect(() => { onUpdateRef.current = onUpdate; });
 
     const isEditable = scan.status === OCRStatus.Ready;
-    const page = scan.pages?.[currentPage];
-    const height = page?.height || scan.imageHeight;
-    const segs: OCRSegment[] = visibleSegments(
-        page?.segments || (scan.segments || []).filter(s => (s.page ?? 0) === currentPage),
-        height,
-        ignoreEnabled ? scan.ignoreHeader : 0,
-        ignoreEnabled ? scan.ignoreFooter : 0,
-    );
 
     const doSave = useCallback(async (id: string, value: string) => {
         setSaveState('saving');
@@ -165,9 +158,9 @@ const TextPanel: React.FC<TextPanelProps> = ({
         if (!isEditable) return null;
         switch (saveState) {
             case 'dirty':
-                return <span className="text-xs text-text-brown/50 dark:text-white/40">编辑中…</span>;
+                return <span className="text-xs text-muted">编辑中…</span>;
             case 'saving':
-                return <span className="flex items-center gap-1 text-xs text-text-brown/50 dark:text-white/40"><Loader2 className="w-3 h-3 animate-spin" /> 保存中…</span>;
+                return <span className="flex items-center gap-1 text-xs text-muted"><Loader2 className="w-3 h-3 animate-spin" /> 保存中…</span>;
             case 'saved':
                 return <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400"><CheckCircle2 className="w-3 h-3" /> 已自动保存</span>;
             case 'error':
@@ -187,10 +180,10 @@ const TextPanel: React.FC<TextPanelProps> = ({
             type="button"
             disabled={!isEditable}
             onClick={() => onLayoutMode(mode)}
-            className={`px-2 py-1 rounded text-[11px] font-semibold border transition-colors disabled:opacity-30 ${
+            className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition-colors disabled:opacity-30 ${
                 layoutMode === mode
                     ? 'border-primary bg-primary/15 text-primary'
-                    : 'border-transparent text-text-brown/60 dark:text-white/50 hover:bg-black/5 dark:hover:bg-white/10'
+                    : 'border-transparent text-muted hover:bg-black/5 dark:hover:bg-white/10'
             }`}
         >
             {label}
@@ -204,7 +197,7 @@ const TextPanel: React.FC<TextPanelProps> = ({
             : [{ index: 0, segments: scan.segments || [], height: scan.imageHeight, width: scan.imageWidth, imageUrl: scan.fullImageUrl }];
 
         return (
-            <div ref={listRef} className="w-full h-full overflow-y-auto p-4 sm:p-6 custom-scrollbar">
+            <div ref={listRef} className="w-full h-full overflow-y-auto p-4 sm:p-6">
                 {pages.map((p) => {
                     const vis = visibleSegments(
                         p.segments || [],
@@ -215,12 +208,12 @@ const TextPanel: React.FC<TextPanelProps> = ({
                     return (
                         <div key={p.index} data-page={p.index} className="mb-4">
                             {multi && (
-                                <div className="text-[11px] font-bold tracking-widest text-text-brown/40 dark:text-white/30 mb-2">
+                                <div className="text-[11px] font-bold tracking-widest text-muted mb-2">
                                     第 {p.index + 1} 页
                                 </div>
                             )}
                             {vis.length === 0 && (
-                                <p className="text-sm text-text-brown/40">本页无识别文本</p>
+                                <p className="text-sm text-muted">本页无识别文本</p>
                             )}
                             {vis.map(seg => {
                                 const active = seg.id === selectedSegmentId;
@@ -232,7 +225,7 @@ const TextPanel: React.FC<TextPanelProps> = ({
                                         data-seg={seg.id}
                                         onClick={() => onSegmentClick(seg.id)}
                                         onDoubleClick={() => handleCopy(seg.text)}
-                                        className={`block w-full text-left px-2 py-1 rounded mb-0.5 font-mono text-sm leading-7 ${
+                                        className={`block w-full text-left px-2 py-1 rounded-lg mb-0.5 font-mono text-sm leading-7 ${
                                             active
                                                 ? 'bg-primary/25 ring-1 ring-primary/40'
                                                 : low
@@ -252,42 +245,52 @@ const TextPanel: React.FC<TextPanelProps> = ({
         );
     };
 
+    const renderReading = () => (
+        <article className="w-full h-full overflow-y-auto px-6 sm:px-12 py-8">
+            <div className="max-w-2xl mx-auto font-serif text-[17px] leading-8 text-ink dark:text-ink-dark whitespace-pre-wrap">
+                {text || <span className="text-muted">暂无文本</span>}
+            </div>
+        </article>
+    );
+
     return (
-        <section className="flex-1 flex flex-col bg-bg-cream dark:bg-surface-dark relative z-0 min-h-0">
-            <div className="flex items-center justify-between px-4 sm:px-6 py-3 border-b border-border-sepia dark:border-border-bronze shrink-0 bg-surface-light dark:bg-surface-dark-lighter/30 gap-2 flex-wrap">
+        <section className="flex-1 flex flex-col bg-bg dark:bg-surface-dark relative z-0 min-h-0">
+            <div className="flex items-center justify-between px-4 sm:px-6 py-3 border-b border-line dark:border-line-dark shrink-0 bg-surface dark:bg-surface-2-dark/40 gap-2 flex-wrap">
                 <div className="flex items-center gap-2.5">
                     <Type className="text-primary w-5 h-5" />
-                    <h3 className="text-xs font-bold uppercase tracking-widest text-text-brown/60 dark:text-primary/70">
-                        识别文本
+                    <h3 className="text-xs font-bold uppercase tracking-widest text-muted dark:text-primary-light/80">
+                        {reading ? '阅读' : '识别文本'}
                     </h3>
                 </div>
                 <div className="flex gap-1 items-center flex-wrap">
                     {saveIndicator}
-                    {modeBtn('raw', '原文')}
-                    {modeBtn('paragraph', '自然段')}
-                    {modeBtn('single', '单行')}
-                    <button
-                        type="button"
-                        onClick={onToggleIgnore}
-                        className={`px-2 py-1 rounded text-[11px] font-semibold border ${
-                            ignoreEnabled ? 'border-primary bg-primary/15 text-primary' : 'border-transparent text-text-brown/60 dark:text-white/50'
-                        }`}
-                        title="忽略页眉页脚(可在图上拖动色带)"
-                    >
-                        忽略页眉
-                    </button>
+                    {!reading && modeBtn('raw', '原文')}
+                    {!reading && modeBtn('paragraph', '自然段')}
+                    {!reading && modeBtn('single', '单行')}
+                    {!reading && (
+                        <button
+                            type="button"
+                            onClick={onToggleIgnore}
+                            className={`px-2 py-1 rounded-lg text-[11px] font-semibold border ${
+                                ignoreEnabled ? 'border-primary bg-primary/15 text-primary' : 'border-transparent text-muted'
+                            }`}
+                            title="忽略页眉页脚(可在图上拖动色带)"
+                        >
+                            忽略页眉
+                        </button>
+                    )}
                     <button
                         type="button"
                         onClick={() => setEditing(e => !e)}
                         disabled={!isEditable}
-                        className="p-2 rounded hover:bg-black/5 dark:hover:bg-white/10 text-text-brown/60 hover:text-primary text-[11px] font-bold disabled:opacity-30"
+                        className="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-muted hover:text-primary text-[11px] font-bold disabled:opacity-30"
                     >
-                        {editing ? '对照' : '编辑'}
+                        {editing ? (reading ? '阅读' : '对照') : '编辑'}
                     </button>
                 </div>
             </div>
 
-            <div className="flex-1 relative bg-bg-cream dark:bg-bg-dark min-h-0">
+            <div className="flex-1 relative bg-bg dark:bg-bg-dark min-h-0">
                 {scan.status === OCRStatus.Error ? (
                     <div className="p-6 text-sm text-red-600 dark:text-red-400 whitespace-pre-wrap">
                         {scan.errorMessage || text}
@@ -297,7 +300,7 @@ const TextPanel: React.FC<TextPanelProps> = ({
                             </button>
                         )}
                     </div>
-                ) : editing || !isEditable ? (
+                ) : editing || (!isEditable && !reading) ? (
                     <textarea
                         ref={textareaRef}
                         value={text}
@@ -305,25 +308,27 @@ const TextPanel: React.FC<TextPanelProps> = ({
                         readOnly={!isEditable}
                         spellCheck={false}
                         placeholder="识别结果将显示在这里,可直接编辑,修改会自动保存。"
-                        className="w-full h-full p-6 sm:p-8 bg-transparent border-0 resize-none focus:ring-0 text-text-brown dark:text-text-cream 
-                        font-mono text-sm custom-scrollbar selection:bg-primary/30 outline-none placeholder:text-text-brown/30 dark:placeholder:text-white/20"
+                        className="w-full h-full p-6 sm:p-8 bg-transparent border-0 resize-none focus:ring-0 text-ink dark:text-ink-dark 
+                        font-mono text-sm selection:bg-primary/30 outline-none placeholder:text-muted"
                         style={{
-                            backgroundImage: 'linear-gradient(transparent 95%, rgba(197, 160, 89, 0.15) 95%)',
+                            backgroundImage: 'linear-gradient(transparent 95%, rgba(15, 118, 110, 0.12) 95%)',
                             backgroundSize: '100% 2rem',
                             lineHeight: '2rem',
                         }}
                     />
+                ) : reading ? (
+                    renderReading()
                 ) : (
                     renderLinked()
                 )}
             </div>
 
-            <div className="border-t border-border-sepia dark:border-border-bronze bg-surface-light dark:bg-surface-dark-lighter px-4 sm:px-6 py-3 flex justify-between items-center shrink-0 flex-wrap gap-2">
+            <div className="border-t border-line dark:border-line-dark bg-surface dark:bg-surface-2-dark px-4 sm:px-6 py-3 flex justify-between items-center shrink-0 flex-wrap gap-2">
                 <div className="flex gap-2 flex-wrap">
                     <button
                         onClick={() => { pendingRef.current = { id: scan.id, text }; flushPending(); }}
                         disabled={!isEditable}
-                        className="flex items-center gap-2 px-3 py-1.5 rounded hover:bg-border-sepia/30 dark:hover:bg-white/10 text-xs font-semibold text-text-brown dark:text-text-cream disabled:opacity-30"
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-line/60 dark:hover:bg-white/10 text-xs font-semibold disabled:opacity-30"
                     >
                         {saveState === 'saving' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                         <span>保存</span>
@@ -331,7 +336,7 @@ const TextPanel: React.FC<TextPanelProps> = ({
                     <button
                         onClick={handleGeneratePdf}
                         disabled={isGeneratingPdf || !isEditable}
-                        className="flex items-center gap-2 px-3 py-1.5 rounded hover:bg-border-sepia/30 dark:hover:bg-white/10 text-xs font-semibold text-text-brown dark:text-text-cream disabled:opacity-50"
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-line/60 dark:hover:bg-white/10 text-xs font-semibold disabled:opacity-50"
                         title="导出双层可检索 PDF"
                     >
                         {isGeneratingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
@@ -339,7 +344,7 @@ const TextPanel: React.FC<TextPanelProps> = ({
                     </button>
                     <button
                         onClick={() => handleCopy()}
-                        className={`flex items-center gap-2 px-3 py-1.5 rounded border text-xs font-semibold ${
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-semibold ${
                             isCopied
                                 ? 'bg-green-500/10 border-green-500/20 text-green-600'
                                 : 'bg-primary/10 hover:bg-primary/20 border-primary/20 text-primary'
@@ -349,7 +354,7 @@ const TextPanel: React.FC<TextPanelProps> = ({
                         <span>{isCopied ? '已复制!' : '复制文本'}</span>
                     </button>
                     {scan.status === OCRStatus.Error && onRetry && (
-                        <button onClick={onRetry} className="flex items-center gap-2 px-3 py-1.5 rounded text-xs font-semibold text-primary">
+                        <button onClick={onRetry} className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold text-primary">
                             <RotateCcw className="w-4 h-4" /> 重新识别
                         </button>
                     )}
@@ -357,7 +362,7 @@ const TextPanel: React.FC<TextPanelProps> = ({
                 <button
                     onClick={handleClear}
                     disabled={!isEditable || !text}
-                    className="flex items-center gap-2 px-3 py-1.5 rounded hover:bg-red-500/10 text-xs font-semibold text-text-brown/60 hover:text-red-600 disabled:opacity-30"
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-red-500/10 text-xs font-semibold text-muted hover:text-red-600 disabled:opacity-30"
                 >
                     <Trash2 className="w-4 h-4" />
                     <span className="hidden sm:inline">清空</span>

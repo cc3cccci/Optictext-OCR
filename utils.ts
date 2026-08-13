@@ -1,5 +1,5 @@
-import { COMPRESS_MAX_SIDE, COMPRESS_TRIGGER_BYTES, DEFAULT_IGNORE } from './constants';
-import { LayoutMode, OCRSegment, ScanPage } from './types';
+import { COMPRESS_MAX_SIDE, COMPRESS_TRIGGER_BYTES, DEFAULT_IGNORE, LOW_CONFIDENCE } from './constants';
+import { DocumentScan, LayoutMode, OCRSegment, OCRStatus, ScanPage } from './types';
 
 /** 中英混合字数统计:汉字按字计,拉丁文按词计 */
 export function countWords(text: string): number {
@@ -273,4 +273,148 @@ export function visibleSegments(
 
 export function sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+export function isPdfScan(scan: DocumentScan): boolean {
+    const name = `${scan.originalFile || ''} ${scan.title || ''}`.toLowerCase();
+    return name.includes('.pdf');
+}
+
+export function scanKind(scan: DocumentScan): 'pdf' | 'image' {
+    return isPdfScan(scan) ? 'pdf' : 'image';
+}
+
+export interface DateGroup {
+    key: string;
+    label: string;
+    scans: DocumentScan[];
+}
+
+export function groupScansByDate(scans: DocumentScan[]): DateGroup[] {
+    const pinned = scans.filter(s => s.pinned);
+    const rest = scans.filter(s => !s.pinned);
+    const groups: DateGroup[] = [];
+    if (pinned.length) groups.push({ key: 'pinned', label: '置顶', scans: pinned });
+
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const startOfYesterday = startOfToday - 86400000;
+    const startOfWeek = startOfToday - 6 * 86400000;
+    const buckets: Record<string, DocumentScan[]> = { today: [], yesterday: [], week: [], older: [] };
+
+    for (const scan of rest) {
+        const t = new Date(scan.date).getTime();
+        if (Number.isNaN(t) || t >= startOfToday) buckets.today.push(scan);
+        else if (t >= startOfYesterday) buckets.yesterday.push(scan);
+        else if (t >= startOfWeek) buckets.week.push(scan);
+        else buckets.older.push(scan);
+    }
+
+    if (buckets.today.length) groups.push({ key: 'today', label: '今天', scans: buckets.today });
+    if (buckets.yesterday.length) groups.push({ key: 'yesterday', label: '昨天', scans: buckets.yesterday });
+    if (buckets.week.length) groups.push({ key: 'week', label: '本周', scans: buckets.week });
+    if (buckets.older.length) groups.push({ key: 'older', label: '更早', scans: buckets.older });
+    return groups;
+}
+
+const TAG_COLORS = [
+    'bg-teal-500/15 text-teal-800 dark:text-teal-200',
+    'bg-sky-500/15 text-sky-800 dark:text-sky-200',
+    'bg-violet-500/15 text-violet-800 dark:text-violet-200',
+    'bg-amber-500/15 text-amber-800 dark:text-amber-200',
+    'bg-rose-500/15 text-rose-800 dark:text-rose-200',
+    'bg-lime-500/15 text-lime-800 dark:text-lime-200',
+];
+
+export function tagClass(tag: string): string {
+    let hash = 0;
+    for (let i = 0; i < tag.length; i++) hash = (hash * 31 + tag.charCodeAt(i)) >>> 0;
+    return TAG_COLORS[hash % TAG_COLORS.length];
+}
+
+export function collectTags(scans: DocumentScan[]): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const scan of scans) {
+        for (const tag of scan.tags || []) {
+            if (!seen.has(tag)) {
+                seen.add(tag);
+                out.push(tag);
+            }
+        }
+    }
+    return out.sort((a, b) => a.localeCompare(b, 'zh-CN'));
+}
+
+export function lowConfidenceSegments(
+    scan: DocumentScan,
+    header = 0,
+    footer = 0,
+): OCRSegment[] {
+    const pages = scan.pages && scan.pages.length
+        ? scan.pages
+        : [{ index: 0, segments: scan.segments || [], height: scan.imageHeight, width: scan.imageWidth, imageUrl: scan.fullImageUrl }];
+    const out: OCRSegment[] = [];
+    for (const page of pages) {
+        const vis = visibleSegments(page.segments || [], page.height || scan.imageHeight, header, footer);
+        for (const seg of vis) {
+            if (seg.confidence > 0 && seg.confidence < LOW_CONFIDENCE) out.push(seg);
+        }
+    }
+    return out;
+}
+
+export function toMarkdown(scan: DocumentScan): string {
+    const title = (scan.title || '识别结果').replace(/\.[^.]+$/, '') || '识别结果';
+    return `# ${title}\n\n${scan.extractedText || ''}\n`;
+}
+
+export function downloadTextFile(content: string, filename: string, mime = 'text/plain;charset=utf-8'): void {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+export async function shareOrCopyText(title: string, text: string): Promise<'shared' | 'copied'> {
+    if (typeof navigator !== 'undefined' && navigator.share) {
+        try {
+            await navigator.share({ title, text });
+            return 'shared';
+        } catch (err: any) {
+            if (err?.name === 'AbortError') throw err;
+        }
+    }
+    if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return 'copied';
+    }
+    const el = document.createElement('textarea');
+    el.value = text;
+    el.style.position = 'fixed';
+    el.style.left = '-9999px';
+    document.body.appendChild(el);
+    el.select();
+    document.execCommand('copy');
+    document.body.removeChild(el);
+    return 'copied';
+}
+
+export function isTypingTarget(target: EventTarget | null): boolean {
+    const el = target as HTMLElement | null;
+    if (!el) return false;
+    const tag = el.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+    return Boolean(el.isContentEditable);
+}
+
+export function statusLabel(status: OCRStatus): string {
+    if (status === OCRStatus.Processing) return '识别中';
+    if (status === OCRStatus.Error) return '失败';
+    return '已完成';
 }
