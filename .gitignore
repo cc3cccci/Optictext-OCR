@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# 识别历史数据(数据库与图片)
+data/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

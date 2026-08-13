@@ -1,17 +1,30 @@
-version: '3.8'
-
 services:
   ocr-app:
     build: .
     image: optictext-ocr:latest
     container_name: optictext-ocr
     ports:
-      - "8000:8000"
+      - "9999:8000"
     volumes:
-      - ./backend:/app/backend
+      - ./data:/app/data
     restart: always
-    # Resource limits as per requirements
-    deploy:
-      resources:
-        limits:
-          memory: 2G
+    mem_limit: 2g
+    cpus: 3.0
+    environment:
+      OMP_NUM_THREADS: "2"
+      ORT_INTRA_OP: "2"
+      OPENCV_FOR_THREADS_NUM: "2"
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
