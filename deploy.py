@@ -5,8 +5,8 @@
     python deploy.py --check         仅检查设备部署条件,不部署
     python deploy.py --host 192.168.50.35 --port 9999
 
-SSH 密码通过环境变量 DEPLOY_PASSWORD 提供;未提供时交互式输入,
-不要将密码写入代码仓库。
+认证:优先使用环境变量 DEPLOY_SSH_KEY(私钥路径)+ 可选 DEPLOY_PASSWORD。
+未提供密钥时交互输入密码。默认校验 known_hosts;旧设备可用 --insecure 跳过。
 
 依赖:pip install paramiko scp
 """
@@ -14,6 +14,7 @@ import argparse
 import getpass
 import os
 import sys
+from typing import Optional
 
 import paramiko
 from scp import SCPClient
@@ -37,10 +38,33 @@ DIRS = ["backend", "components", "public"]
 EXCLUDE_NAMES = {"__pycache__", "node_modules", ".git", "data", "dist"}
 
 
-def create_ssh_client(host: str, port: int, user: str, password: str) -> paramiko.SSHClient:
+def create_ssh_client(
+    host: str,
+    port: int,
+    user: str,
+    password: Optional[str],
+    key_filename: Optional[str],
+    insecure: bool,
+) -> paramiko.SSHClient:
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(host, port, user, password, look_for_keys=False, allow_agent=False, timeout=15)
+    client.load_system_host_keys()
+    if insecure:
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    else:
+        client.set_missing_host_key_policy(paramiko.RejectPolicy())
+    connect_kw = dict(
+        hostname=host,
+        port=port,
+        username=user,
+        timeout=15,
+        allow_agent=not bool(key_filename),
+        look_for_keys=not bool(key_filename),
+    )
+    if key_filename:
+        connect_kw["key_filename"] = key_filename
+    if password:
+        connect_kw["password"] = password
+    client.connect(**connect_kw)
     return client
 
 
@@ -210,15 +234,23 @@ def main() -> None:
     parser.add_argument("--remote-path", default=DEFAULT_REMOTE_PATH, help="设备上的部署目录")
     parser.add_argument("--check", action="store_true", help="仅执行部署条件预检")
     parser.add_argument("--skip-check", action="store_true", help="跳过预检直接部署")
+    parser.add_argument("--insecure", action="store_true", help="不校验 SSH 主机指纹(仅内网旧设备)")
+    parser.add_argument("--ssh-key", default=os.environ.get("DEPLOY_SSH_KEY"), help="SSH 私钥路径")
     args = parser.parse_args()
 
-    password = os.environ.get("DEPLOY_PASSWORD") or getpass.getpass(f"{args.user}@{args.host} 的 SSH 密码: ")
+    password = os.environ.get("DEPLOY_PASSWORD")
+    if not args.ssh_key and not password:
+        password = getpass.getpass(f"{args.user}@{args.host} 的 SSH 密码: ")
 
     print(f"连接 {args.user}@{args.host}:{args.ssh_port} …")
     try:
-        ssh = create_ssh_client(args.host, args.ssh_port, args.user, password)
+        ssh = create_ssh_client(
+            args.host, args.ssh_port, args.user, password, args.ssh_key, args.insecure,
+        )
     except Exception as e:
         print(f"连接失败: {e}")
+        if "Unknown server" in str(e) or "not found in known_hosts" in str(e).lower():
+            print("提示:首次连接可加 --insecure,或先把设备公钥写入 ~/.ssh/known_hosts")
         sys.exit(1)
 
     try:

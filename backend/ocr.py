@@ -1,34 +1,58 @@
 """OCR 处理核心。
 
-- 图片:PIL 读取并做 EXIF 方向矫正后交给 RapidOCR,返回文本、置信度与文字框坐标。
-- PDF:PyMuPDF 逐页处理;含文本层的页面直接提取(快且无损),
-  扫描页渲染成图片后走 OCR。预览图与文字框对应第一页。
-- 识别结果统一附带预览图/缩略图文件,供历史记录持久化使用。
+- 图片:EXIF 矫正 + CLAHE 增强后交给 RapidOCR。
+- PDF:文本层优先,扫描页逐页 OCR;每一页都保存预览图。
+- 线程数受环境变量限制,避免在 Armbian 上把 CPU 打满。
 """
 import io
 import os
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import cv2
 import numpy as np
 from PIL import Image, ImageOps
 from rapidocr_onnxruntime import RapidOCR
 
-# PDF 渲染参数
+try:
+    from . import layout
+except ImportError:
+    import layout
+
 PDF_RENDER_DPI = 150
 PDF_MAX_PAGES = 10
-# 页面文本层长度达到该值则认为是文字版 PDF,直接提取无需 OCR
 PDF_TEXT_LAYER_MIN_CHARS = 10
 
-# 预览图/缩略图参数
 PREVIEW_MAX_SIDE = 2600
 PREVIEW_JPEG_QUALITY = 90
 THUMB_WIDTH = 320
 THUMB_JPEG_QUALITY = 80
 
+ProgressCb = Callable[[int, int, dict], None]
+
+
+def _thread_count() -> int:
+    raw = os.environ.get("ORT_INTRA_OP") or os.environ.get("OMP_NUM_THREADS") or "2"
+    try:
+        return max(1, min(8, int(raw)))
+    except ValueError:
+        return 2
+
+
+def apply_thread_limits(num_threads: Optional[int] = None) -> int:
+    """限制 OpenMP / OpenCV 线程,须在创建推理会话之前调用。"""
+    n = num_threads if num_threads is not None else _thread_count()
+    os.environ.setdefault("OMP_NUM_THREADS", str(n))
+    os.environ.setdefault("MKL_NUM_THREADS", str(n))
+    os.environ.setdefault("OPENBLAS_NUM_THREADS", str(n))
+    os.environ.setdefault("NUMEXPR_NUM_THREADS", str(n))
+    try:
+        cv2.setNumThreads(n)
+    except Exception:
+        pass
+    return n
+
 
 def _import_pymupdf():
-    """兼容不同版本的 PyMuPDF 导入方式(1.24.3+ 推荐 import pymupdf)。"""
     try:
         import pymupdf
         return pymupdf
@@ -38,40 +62,63 @@ def _import_pymupdf():
 
 
 class OCRProcessor:
-    def __init__(self):
-        # RapidOCR 默认加载内置 PP-OCRv4 mobile 模型(中英混合),
-        # 适合 Armbian 这类 CPU 受限设备。
-        self.ocr_engine = RapidOCR()
+    def __init__(self, num_threads: Optional[int] = None):
+        self.num_threads = apply_thread_limits(num_threads)
+        self.ocr_engine = self._init_engine(self.num_threads)
+        self._warmup()
+
+    @staticmethod
+    def _init_engine(num_threads: int) -> RapidOCR:
+        # RapidOCR 1.3.x 将未知 kwargs 写入 Global 配置;intra_op 会传到 ORT Session。
+        try:
+            return RapidOCR(intra_op_num_threads=num_threads, inter_op_num_threads=1)
+        except Exception:
+            return RapidOCR()
+
+    def _warmup(self) -> None:
+        """用小图跑通检测/识别,避免首张真实请求额外等待加载。"""
+        try:
+            dummy = np.full((32, 32, 3), 255, dtype=np.uint8)
+            self.ocr_engine(dummy)
+        except Exception as exc:
+            print(f"OCR warmup skipped: {exc}")
 
     # ---------- 公共入口 ----------
 
-    def process_image(self, image_content: bytes, images_dir: str, basename: str) -> dict:
-        """处理图片字节流,返回识别结果与落盘的预览图/缩略图文件名。"""
+    def process_image(
+        self,
+        image_content: bytes,
+        images_dir: str,
+        basename: str,
+        layout_mode: str = layout.DEFAULT_LAYOUT,
+        ignore_header: float = layout.DEFAULT_IGNORE,
+        ignore_footer: float = layout.DEFAULT_IGNORE,
+        on_progress: Optional[ProgressCb] = None,
+    ) -> dict:
         img_bgr = self._decode_image(image_content)
         if img_bgr is None:
             raise ValueError("无法解析图片文件,请确认文件未损坏")
 
         img_bgr = self._limit_size(img_bgr)
-        text, confidence, segments = self._run_ocr(img_bgr)
+        page = self._ocr_page(
+            img_bgr, images_dir, basename, 0, layout_mode, ignore_header, ignore_footer
+        )
+        if on_progress:
+            on_progress(1, 1, page)
 
-        height, width = img_bgr.shape[:2]
-        image_file, thumb_file = self._save_preview(img_bgr, images_dir, basename)
+        return self._pack_result([page], 1, 1, images_dir, basename)
 
-        return {
-            "extracted_text": text,
-            "confidence": confidence,
-            "segments": segments,
-            "image_file": image_file,
-            "thumb_file": thumb_file,
-            "image_width": width,
-            "image_height": height,
-            "page_count": 1,
-        }
-
-    def process_pdf(self, pdf_content: bytes, images_dir: str, basename: str) -> dict:
-        """逐页处理 PDF:文本层优先,扫描页走 OCR;预览图取第一页。"""
-        fitz = _import_pymupdf()  # 延迟导入,无该依赖时图片功能仍可用
-
+    def process_pdf(
+        self,
+        pdf_content: bytes,
+        images_dir: str,
+        basename: str,
+        layout_mode: str = layout.DEFAULT_LAYOUT,
+        ignore_header: float = layout.DEFAULT_IGNORE,
+        ignore_footer: float = layout.DEFAULT_IGNORE,
+        on_progress: Optional[ProgressCb] = None,
+    ) -> dict:
+        fitz = _import_pymupdf()
         try:
             doc = fitz.open(stream=pdf_content, filetype="pdf")
         except Exception:
@@ -83,72 +130,121 @@ class OCRProcessor:
                 raise ValueError("PDF 文件不含任何页面")
             pages_to_process = min(total_pages, PDF_MAX_PAGES)
             zoom = PDF_RENDER_DPI / 72.0
-
-            page_texts: List[str] = []
-            ocr_confidences: List[float] = []
-            first_page_segments: List[dict] = []
-            first_page_img: Optional[np.ndarray] = None
+            pages: List[dict] = []
 
             for page_index in range(pages_to_process):
                 page = doc.load_page(page_index)
-                need_preview = page_index == 0
-
                 text_layer = page.get_text().strip()
+                img_bgr = self._render_page(page, zoom)
                 if len(text_layer) >= PDF_TEXT_LAYER_MIN_CHARS:
-                    # 文字版页面:直接提取,精确且极快
-                    page_texts.append(text_layer)
-                    if need_preview:
-                        first_page_img = self._render_page(page, zoom)
-                        first_page_segments = self._words_to_segments(page, zoom)
+                    segments = self._words_to_line_segments(page, zoom, page_index)
+                    height, width = img_bgr.shape[:2]
+                    text, ordered = layout.layout_text(
+                        segments, height, layout_mode, ignore_header, ignore_footer
+                    )
+                    image_file = self._save_page_image(img_bgr, images_dir, basename, page_index)
+                    page_info = {
+                        "index": page_index,
+                        "image_file": image_file,
+                        "width": width,
+                        "height": height,
+                        "segments": ordered,
+                        "text": text,
+                        "confidence": 1.0,
+                    }
                 else:
-                    # 扫描版页面:渲染成图片后 OCR
-                    img_bgr = self._render_page(page, zoom)
-                    text, confidence, segments = self._run_ocr(img_bgr)
-                    page_texts.append(text)
-                    if text:
-                        ocr_confidences.append(confidence)
-                    if need_preview:
-                        first_page_img = img_bgr
-                        first_page_segments = segments
+                    page_info = self._ocr_page(
+                        img_bgr, images_dir, basename, page_index,
+                        layout_mode, ignore_header, ignore_footer,
+                    )
+                pages.append(page_info)
+                if on_progress:
+                    on_progress(page_index + 1, total_pages, page_info)
 
-            full_text = self._join_pages(page_texts, total_pages, pages_to_process)
-            confidence = (
-                sum(ocr_confidences) / len(ocr_confidences) if ocr_confidences else 1.0
-            )
-
-            assert first_page_img is not None
-            height, width = first_page_img.shape[:2]
-            image_file, thumb_file = self._save_preview(first_page_img, images_dir, basename)
-
-            return {
-                "extracted_text": full_text,
-                "confidence": confidence,
-                "segments": first_page_segments,
-                "image_file": image_file,
-                "thumb_file": thumb_file,
-                "image_width": width,
-                "image_height": height,
-                "page_count": total_pages,
-            }
+            return self._pack_result(pages, total_pages, pages_to_process, images_dir, basename)
         finally:
             doc.close()
 
-    # ---------- 内部工具 ----------
+    def _pack_result(
+        self,
+        pages: List[dict],
+        total_pages: int,
+        processed_pages: int,
+        images_dir: str,
+        basename: str,
+    ) -> dict:
+        first = pages[0]
+        thumb_file = self._save_thumb(
+            os.path.join(images_dir, first["image_file"]),
+            images_dir,
+            basename,
+        )
+        confidences = [p["confidence"] for p in pages if p.get("confidence")]
+        texts = [p.get("text") or "" for p in pages]
+        all_segments: List[dict] = []
+        for p in pages:
+            all_segments.extend(p.get("segments") or [])
+
+        public_pages = [{
+            "index": p["index"],
+            "image_file": p["image_file"],
+            "width": p["width"],
+            "height": p["height"],
+            "segments": p.get("segments") or [],
+        } for p in pages]
+
+        return {
+            "extracted_text": layout.join_pages(texts, total_pages, processed_pages),
+            "confidence": (sum(confidences) / len(confidences)) if confidences else 0.0,
+            "segments": all_segments,
+            "pages": public_pages,
+            "image_file": first["image_file"],
+            "thumb_file": thumb_file,
+            "image_width": first["width"],
+            "image_height": first["height"],
+            "page_count": total_pages,
+            "page_done": processed_pages,
+        }
+
+    def _ocr_page(
+        self,
+        img_bgr: np.ndarray,
+        images_dir: str,
+        basename: str,
+        page_index: int,
+        layout_mode: str,
+        ignore_header: float,
+        ignore_footer: float,
+    ) -> dict:
+        enhanced = self._enhance(img_bgr)
+        text, confidence, segments = self._run_ocr(
+            enhanced, page_index, img_bgr.shape[0], layout_mode, ignore_header, ignore_footer
+        )
+        height, width = img_bgr.shape[:2]
+        image_file = self._save_page_image(img_bgr, images_dir, basename, page_index)
+        return {
+            "index": page_index,
+            "image_file": image_file,
+            "width": width,
+            "height": height,
+            "segments": segments,
+            "text": text,
+            "confidence": confidence,
+        }
+
+    # ---------- 图像 ----------
 
     def _decode_image(self, content: bytes) -> Optional[np.ndarray]:
-        """解码图片并做 EXIF 方向矫正(手机竖拍照片),输出 BGR ndarray。"""
         try:
             pil_img = Image.open(io.BytesIO(content))
             pil_img = ImageOps.exif_transpose(pil_img)
             pil_img = pil_img.convert("RGB")
             return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
         except Exception:
-            # PIL 不支持的格式退回 OpenCV 解码(无 EXIF 处理)
             nparr = np.frombuffer(content, np.uint8)
             return cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
     def _limit_size(self, img: np.ndarray) -> np.ndarray:
-        """限制最长边,避免超大图在弱设备上撑爆内存。"""
         h, w = img.shape[:2]
         longest = max(h, w)
         if longest <= PREVIEW_MAX_SIDE:
@@ -156,30 +252,48 @@ class OCRProcessor:
         scale = PREVIEW_MAX_SIDE / longest
         return cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
 
-    def _run_ocr(self, img_bgr: np.ndarray) -> Tuple[str, float, List[dict]]:
-        """执行 OCR,返回 (整体文本, 平均置信度, 分段结果含外接矩形坐标)。"""
+    @staticmethod
+    def _enhance(img_bgr: np.ndarray) -> np.ndarray:
+        """CLAHE 提升拍照对比度,不改变几何尺寸(文字框仍对齐原图)。"""
+        lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
+        l_ch, a_ch, b_ch = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        l_ch = clahe.apply(l_ch)
+        return cv2.cvtColor(cv2.merge([l_ch, a_ch, b_ch]), cv2.COLOR_LAB2BGR)
+
+    def _run_ocr(
+        self,
+        img_bgr: np.ndarray,
+        page_index: int,
+        image_height: int,
+        layout_mode: str,
+        ignore_header: float,
+        ignore_footer: float,
+    ) -> Tuple[str, float, List[dict]]:
         result, _elapse = self.ocr_engine(img_bgr)
         if not result:
             return "", 0.0, []
 
-        lines: List[str] = []
         segments: List[dict] = []
         total_confidence = 0.0
-
         for box, text, conf in result:
-            lines.append(text)
             total_confidence += float(conf)
             segments.append({
                 "text": text,
                 "confidence": round(float(conf), 4),
                 "box": self._bounding_rect(box),
+                "page": page_index,
             })
 
-        return "\n".join(lines), total_confidence / len(result), segments
+        text, ordered = layout.layout_text(
+            segments, image_height, layout_mode, ignore_header, ignore_footer
+        )
+        ordered = layout.assign_ids(ordered, page_index)
+        avg = total_confidence / len(result) if result else 0.0
+        return text, avg, ordered
 
     @staticmethod
     def _bounding_rect(box) -> List[int]:
-        """四点多边形 -> 外接矩形 [x0, y0, x1, y1](像素坐标)。"""
         xs = [p[0] for p in box]
         ys = [p[1] for p in box]
         return [int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))]
@@ -187,7 +301,6 @@ class OCRProcessor:
     @staticmethod
     def _render_page(page, zoom: float) -> np.ndarray:
         fitz = _import_pymupdf()
-
         pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
         img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
         if pix.n == 3:
@@ -197,59 +310,67 @@ class OCRProcessor:
         return cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
 
     @staticmethod
-    def _words_to_segments(page, zoom: float) -> List[dict]:
-        """文字版 PDF 的词级 bbox(PDF 点坐标)换算为渲染图像素坐标。"""
-        segments: List[dict] = []
+    def _words_to_line_segments(page, zoom: float, page_index: int) -> List[dict]:
+        """文字版 PDF:词级 bbox 聚成行,便于图文互链。"""
         try:
             words = page.get_text("words")
         except Exception:
-            return segments
+            return []
+        raw: List[dict] = []
         for w in words:
             x0, y0, x1, y1, word = w[0], w[1], w[2], w[3], w[4]
-            segments.append({
+            raw.append({
                 "text": word,
                 "confidence": 1.0,
                 "box": [int(x0 * zoom), int(y0 * zoom), int(x1 * zoom), int(y1 * zoom)],
+                "page": page_index,
             })
-        return segments
+        lines = layout.cluster_lines(raw)
+        segments: List[dict] = []
+        for line in lines:
+            boxes = [layout._box(s) for s in line["items"]]
+            boxes = [b for b in boxes if b]
+            if not boxes:
+                continue
+            segments.append({
+                "text": layout._line_text(line),
+                "confidence": 1.0,
+                "box": [
+                    min(b[0] for b in boxes),
+                    min(b[1] for b in boxes),
+                    max(b[2] for b in boxes),
+                    max(b[3] for b in boxes),
+                ],
+                "page": page_index,
+            })
+        return layout.assign_ids(segments, page_index)
 
     @staticmethod
-    def _join_pages(page_texts: List[str], total_pages: int, processed_pages: int) -> str:
-        if len(page_texts) == 1 and total_pages == 1:
-            return page_texts[0]
-        parts = []
-        for i, text in enumerate(page_texts, start=1):
-            parts.append(f"—— 第 {i} 页 ——\n{text}")
-        joined = "\n\n".join(parts)
-        if total_pages > processed_pages:
-            joined += f"\n\n(共 {total_pages} 页,已识别前 {processed_pages} 页)"
-        return joined
-
-    @staticmethod
-    def _save_preview(img_bgr: np.ndarray, images_dir: str, basename: str) -> Tuple[str, str]:
-        """保存预览大图与缩略图(JPEG),返回文件名。
-
-        预览图为方向矫正后的像素,与文字框坐标严格一致。
-        """
+    def _save_page_image(img_bgr: np.ndarray, images_dir: str, basename: str, page_index: int) -> str:
         os.makedirs(images_dir, exist_ok=True)
-        image_file = f"{basename}.jpg"
-        thumb_file = f"{basename}_thumb.jpg"
-
+        image_file = f"{basename}_p{page_index}.jpg"
         cv2.imwrite(
             os.path.join(images_dir, image_file),
             img_bgr,
             [cv2.IMWRITE_JPEG_QUALITY, PREVIEW_JPEG_QUALITY],
         )
+        return image_file
 
+    @staticmethod
+    def _save_thumb(page_path: str, images_dir: str, basename: str) -> str:
+        img_bgr = cv2.imread(page_path)
+        if img_bgr is None:
+            return ""
         h, w = img_bgr.shape[:2]
         if w > THUMB_WIDTH:
             scale = THUMB_WIDTH / w
             thumb = cv2.resize(img_bgr, (THUMB_WIDTH, max(1, int(h * scale))), interpolation=cv2.INTER_AREA)
         else:
             thumb = img_bgr
+        thumb_file = f"{basename}_thumb.jpg"
         cv2.imwrite(
             os.path.join(images_dir, thumb_file),
             thumb,
             [cv2.IMWRITE_JPEG_QUALITY, THUMB_JPEG_QUALITY],
         )
-        return image_file, thumb_file
+        return thumb_file

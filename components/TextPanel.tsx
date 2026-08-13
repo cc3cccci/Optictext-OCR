@@ -1,57 +1,52 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Type, WrapText, Save, FileText, Copy, Trash2, CheckCircle2, AlertCircle, Loader2 } from './Icon';
-import { DocumentScan, OCRStatus } from '../types';
-import { autoFormatText } from '../utils';
-import { jsPDF } from 'jspdf';
+import { Type, Save, FileText, Copy, Trash2, CheckCircle2, AlertCircle, Loader2, RotateCcw } from './Icon';
+import { DocumentScan, LayoutMode, OCRSegment, OCRStatus } from '../types';
+import { visibleSegments } from '../utils';
+import { downloadSearchablePdf } from '../api';
 
 interface TextPanelProps {
     scan: DocumentScan;
     onUpdate: (id: string, text: string) => Promise<void>;
+    selectedSegmentId: string | null;
+    onSegmentClick: (id: string) => void;
+    currentPage: number;
+    layoutMode: LayoutMode;
+    onLayoutMode: (mode: LayoutMode) => void;
+    ignoreEnabled: boolean;
+    onToggleIgnore: () => void;
+    onRetry?: () => void;
+    onCopyLine?: (text: string) => void;
 }
 
 type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
-
 const AUTOSAVE_DELAY_MS = 1200;
 
-// 中文字体缓存(base64),仅在首次导出 PDF 时加载一次
-let cachedFontBase64: string | null = null;
-
-async function loadCJKFontBase64(): Promise<string | null> {
-    if (cachedFontBase64) return cachedFontBase64;
-    try {
-        const res = await fetch('/fonts/NotoSansSC-Regular-subset.ttf');
-        if (!res.ok) return null;
-        const buf = await res.arrayBuffer();
-        const bytes = new Uint8Array(buf);
-        let binary = '';
-        const chunk = 0x8000;
-        for (let i = 0; i < bytes.length; i += chunk) {
-            binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)));
-        }
-        cachedFontBase64 = btoa(binary);
-        return cachedFontBase64;
-    } catch {
-        return null;
-    }
-}
-
-const TextPanel: React.FC<TextPanelProps> = ({ scan, onUpdate }) => {
+const TextPanel: React.FC<TextPanelProps> = ({
+    scan, onUpdate, selectedSegmentId, onSegmentClick, currentPage,
+    layoutMode, onLayoutMode, ignoreEnabled, onToggleIgnore, onRetry, onCopyLine,
+}) => {
     const [text, setText] = useState(scan.extractedText);
     const [saveState, setSaveState] = useState<SaveState>('idle');
     const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
     const [isCopied, setIsCopied] = useState(false);
+    const [editing, setEditing] = useState(false);
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const listRef = useRef<HTMLDivElement>(null);
     const pendingRef = useRef<{ id: string; text: string } | null>(null);
     const timerRef = useRef<number | null>(null);
     const onUpdateRef = useRef(onUpdate);
-    useEffect(() => {
-        onUpdateRef.current = onUpdate;
-    });
+    useEffect(() => { onUpdateRef.current = onUpdate; });
 
     const isEditable = scan.status === OCRStatus.Ready;
-
-    // ---------- 自动保存 ----------
+    const page = scan.pages?.[currentPage];
+    const height = page?.height || scan.imageHeight;
+    const segs: OCRSegment[] = visibleSegments(
+        page?.segments || (scan.segments || []).filter(s => (s.page ?? 0) === currentPage),
+        height,
+        ignoreEnabled ? scan.ignoreHeader : 0,
+        ignoreEnabled ? scan.ignoreFooter : 0,
+    );
 
     const doSave = useCallback(async (id: string, value: string) => {
         setSaveState('saving');
@@ -89,15 +84,25 @@ const TextPanel: React.FC<TextPanelProps> = ({ scan, onUpdate }) => {
         }, AUTOSAVE_DELAY_MS);
     }, [doSave]);
 
-    // 切换文档 / 状态变化(识别完成、失败)时同步文本;离开前保存未落盘的编辑
     useEffect(() => {
         setText(scan.extractedText);
         setSaveState('idle');
-        return () => {
-            flushPending();
-        };
+        setEditing(false);
+        return () => { flushPending(); };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [scan.id, scan.status]);
+    }, [scan.id, scan.status, scan.extractedText]);
+
+    useEffect(() => {
+        if (!selectedSegmentId || !listRef.current) return;
+        const el = listRef.current.querySelector(`[data-seg="${selectedSegmentId}"]`);
+        el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, [selectedSegmentId]);
+
+    useEffect(() => {
+        if (editing || !listRef.current) return;
+        const mark = listRef.current.querySelector(`[data-page="${currentPage}"]`);
+        mark?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }, [currentPage, editing]);
 
     const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         const value = e.target.value;
@@ -113,116 +118,48 @@ const TextPanel: React.FC<TextPanelProps> = ({ scan, onUpdate }) => {
         }
     };
 
-    // ---------- 工具操作 ----------
-
-    const handleAutoFormat = () => {
-        applyText(autoFormatText(text));
-    };
-
     const handleClear = () => {
         if (!text) return;
-        if (confirm('确定清空当前识别文本吗?(原图不受影响)')) {
-            applyText('');
-        }
+        applyText('');
     };
-
-    const handleSelectAll = () => {
-        textareaRef.current?.select();
-        textareaRef.current?.focus();
-    };
-
-    // ---------- 复制(含 HTTP 非安全上下文降级方案) ----------
 
     const showCopySuccess = () => {
         setIsCopied(true);
         setTimeout(() => setIsCopied(false), 2000);
     };
 
-    const fallbackCopyTextToClipboard = (value: string) => {
-        const textArea = document.createElement('textarea');
-        textArea.value = value;
-        textArea.style.position = 'fixed';
-        textArea.style.left = '-9999px';
-        textArea.style.top = '0';
-        document.body.appendChild(textArea);
-        textArea.focus();
-        textArea.select();
+    const fallbackCopy = (value: string) => {
+        const el = document.createElement('textarea');
+        el.value = value;
+        el.style.position = 'fixed';
+        el.style.left = '-9999px';
+        document.body.appendChild(el);
+        el.select();
         try {
-            if (document.execCommand('copy')) {
-                showCopySuccess();
-            } else {
-                alert('复制失败,请手动全选文本后按 Ctrl+C 复制。');
-            }
-        } catch {
-            alert('复制失败,请手动全选文本后按 Ctrl+C 复制。');
+            if (document.execCommand('copy')) showCopySuccess();
+        } finally {
+            document.body.removeChild(el);
         }
-        document.body.removeChild(textArea);
     };
 
-    const handleCopy = () => {
+    const handleCopy = (value = text) => {
         if (navigator.clipboard && window.isSecureContext) {
-            navigator.clipboard.writeText(text).then(showCopySuccess).catch(() => {
-                fallbackCopyTextToClipboard(text);
-            });
+            navigator.clipboard.writeText(value).then(showCopySuccess).catch(() => fallbackCopy(value));
         } else {
-            fallbackCopyTextToClipboard(text);
+            fallbackCopy(value);
         }
     };
-
-    // ---------- PDF 导出(嵌入中文字体) ----------
 
     const handleGeneratePdf = async () => {
         setIsGeneratingPdf(true);
         try {
-            const fontB64 = await loadCJKFontBase64();
-            if (!fontB64) {
-                const proceed = confirm(
-                    '中文字体资源加载失败,PDF 中的中文会显示为乱码。\n建议改用「导出 TXT」。仍要继续生成 PDF 吗?'
-                );
-                if (!proceed) return;
-            }
-
-            const doc = new jsPDF();
-            let fontName = 'courier';
-            if (fontB64) {
-                doc.addFileToVFS('NotoSansSC-subset.ttf', fontB64);
-                doc.addFont('NotoSansSC-subset.ttf', 'NotoSansSC', 'normal');
-                fontName = 'NotoSansSC';
-            }
-
-            doc.setFont(fontName, 'normal');
-            doc.setFontSize(12);
-            doc.text(`文档:${scan.title}`, 10, 14);
-            doc.setFontSize(9);
-            doc.setTextColor(120);
-            doc.text(`导出时间:${new Date().toLocaleString('zh-CN')}`, 10, 20);
-            doc.setDrawColor(180);
-            doc.line(10, 24, 200, 24);
-            doc.setTextColor(0);
-            doc.setFontSize(11);
-
-            const splitText: string[] = doc.splitTextToSize(text || '(无文本)', 185);
-            let y = 32;
-            for (const line of splitText) {
-                if (y > 285) {
-                    doc.addPage();
-                    y = 16;
-                }
-                doc.text(line, 10, y);
-                y += 6.2;
-            }
-
-            const filename = scan.title.replace(/\.[^.]+$/, '') || '识别结果';
-            doc.save(`${filename}.pdf`);
-        } catch (e) {
-            console.error('PDF 生成失败', e);
-            alert('PDF 生成失败,请改用「导出 TXT」。');
+            await downloadSearchablePdf(scan.id, scan.title);
+        } catch (e: any) {
+            onCopyLine?.(e?.message || '导出 PDF 失败');
         } finally {
             setIsGeneratingPdf(false);
         }
     };
-
-    // ---------- 保存状态提示 ----------
 
     const saveIndicator = (() => {
         if (!isEditable) return null;
@@ -230,20 +167,12 @@ const TextPanel: React.FC<TextPanelProps> = ({ scan, onUpdate }) => {
             case 'dirty':
                 return <span className="text-xs text-text-brown/50 dark:text-white/40">编辑中…</span>;
             case 'saving':
-                return (
-                    <span className="flex items-center gap-1 text-xs text-text-brown/50 dark:text-white/40">
-                        <Loader2 className="w-3 h-3 animate-spin" /> 保存中…
-                    </span>
-                );
+                return <span className="flex items-center gap-1 text-xs text-text-brown/50 dark:text-white/40"><Loader2 className="w-3 h-3 animate-spin" /> 保存中…</span>;
             case 'saved':
-                return (
-                    <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
-                        <CheckCircle2 className="w-3 h-3" /> 已自动保存
-                    </span>
-                );
+                return <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400"><CheckCircle2 className="w-3 h-3" /> 已自动保存</span>;
             case 'error':
                 return (
-                    <button onClick={flushPendingWithRetry} className="flex items-center gap-1 text-xs text-red-500 hover:underline">
+                    <button onClick={() => { pendingRef.current = { id: scan.id, text }; flushPending(); }} className="flex items-center gap-1 text-xs text-red-500 hover:underline">
                         <AlertCircle className="w-3 h-3" /> 保存失败,点击重试
                     </button>
                 );
@@ -252,106 +181,183 @@ const TextPanel: React.FC<TextPanelProps> = ({ scan, onUpdate }) => {
         }
     })();
 
-    function flushPendingWithRetry() {
-        pendingRef.current = { id: scan.id, text };
-        flushPending();
-    }
+    const modeBtn = (mode: LayoutMode, label: string) => (
+        <button
+            key={mode}
+            type="button"
+            disabled={!isEditable}
+            onClick={() => onLayoutMode(mode)}
+            className={`px-2 py-1 rounded text-[11px] font-semibold border transition-colors disabled:opacity-30 ${
+                layoutMode === mode
+                    ? 'border-primary bg-primary/15 text-primary'
+                    : 'border-transparent text-text-brown/60 dark:text-white/50 hover:bg-black/5 dark:hover:bg-white/10'
+            }`}
+        >
+            {label}
+        </button>
+    );
+
+    const renderLinked = () => {
+        const multi = (scan.pages?.length || scan.pageCount) > 1;
+        const pages = scan.pages && scan.pages.length
+            ? scan.pages
+            : [{ index: 0, segments: scan.segments || [], height: scan.imageHeight, width: scan.imageWidth, imageUrl: scan.fullImageUrl }];
+
+        return (
+            <div ref={listRef} className="w-full h-full overflow-y-auto p-4 sm:p-6 custom-scrollbar">
+                {pages.map((p) => {
+                    const vis = visibleSegments(
+                        p.segments || [],
+                        p.height || scan.imageHeight,
+                        ignoreEnabled ? scan.ignoreHeader : 0,
+                        ignoreEnabled ? scan.ignoreFooter : 0,
+                    );
+                    return (
+                        <div key={p.index} data-page={p.index} className="mb-4">
+                            {multi && (
+                                <div className="text-[11px] font-bold tracking-widest text-text-brown/40 dark:text-white/30 mb-2">
+                                    第 {p.index + 1} 页
+                                </div>
+                            )}
+                            {vis.length === 0 && (
+                                <p className="text-sm text-text-brown/40">本页无识别文本</p>
+                            )}
+                            {vis.map(seg => {
+                                const active = seg.id === selectedSegmentId;
+                                const low = seg.confidence > 0 && seg.confidence < 0.7;
+                                return (
+                                    <button
+                                        key={seg.id}
+                                        type="button"
+                                        data-seg={seg.id}
+                                        onClick={() => onSegmentClick(seg.id)}
+                                        onDoubleClick={() => handleCopy(seg.text)}
+                                        className={`block w-full text-left px-2 py-1 rounded mb-0.5 font-mono text-sm leading-7 ${
+                                            active
+                                                ? 'bg-primary/25 ring-1 ring-primary/40'
+                                                : low
+                                                    ? 'bg-amber-500/10 hover:bg-amber-500/20'
+                                                    : 'hover:bg-black/5 dark:hover:bg-white/10'
+                                        }`}
+                                        title="单击定位原图,双击复制此行"
+                                    >
+                                        {seg.text}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    );
+                })}
+            </div>
+        );
+    };
 
     return (
         <section className="flex-1 flex flex-col bg-bg-cream dark:bg-surface-dark relative z-0 min-h-0">
-            {/* 工具栏 */}
-            <div className="flex items-center justify-between px-4 sm:px-6 py-3 border-b border-border-sepia dark:border-border-bronze shrink-0 bg-surface-light dark:bg-surface-dark-lighter/30">
+            <div className="flex items-center justify-between px-4 sm:px-6 py-3 border-b border-border-sepia dark:border-border-bronze shrink-0 bg-surface-light dark:bg-surface-dark-lighter/30 gap-2 flex-wrap">
                 <div className="flex items-center gap-2.5">
                     <Type className="text-primary w-5 h-5" />
                     <h3 className="text-xs font-bold uppercase tracking-widest text-text-brown/60 dark:text-primary/70">
                         识别文本
                     </h3>
                 </div>
-                <div className="flex gap-1 items-center">
+                <div className="flex gap-1 items-center flex-wrap">
                     {saveIndicator}
-                    <div className="w-px h-4 bg-border-sepia dark:bg-border-bronze mx-1"></div>
+                    {modeBtn('raw', '原文')}
+                    {modeBtn('paragraph', '自然段')}
+                    {modeBtn('single', '单行')}
                     <button
-                        onClick={handleAutoFormat}
-                        disabled={!isEditable}
-                        className="p-2 rounded hover:bg-black/5 dark:hover:bg-white/10 text-text-brown/60 hover:text-primary dark:text-white/50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                        title="自动排版:合并断行、整理空格(支持中文标点)"
+                        type="button"
+                        onClick={onToggleIgnore}
+                        className={`px-2 py-1 rounded text-[11px] font-semibold border ${
+                            ignoreEnabled ? 'border-primary bg-primary/15 text-primary' : 'border-transparent text-text-brown/60 dark:text-white/50'
+                        }`}
+                        title="忽略页眉页脚(可在图上拖动色带)"
                     >
-                        <WrapText className="w-4 h-4" />
+                        忽略页眉
                     </button>
                     <button
-                        onClick={handleSelectAll}
-                        className="p-2 rounded hover:bg-black/5 dark:hover:bg-white/10 text-text-brown/60 hover:text-primary dark:text-white/50 transition-colors"
-                        title="全选文本"
+                        type="button"
+                        onClick={() => setEditing(e => !e)}
+                        disabled={!isEditable}
+                        className="p-2 rounded hover:bg-black/5 dark:hover:bg-white/10 text-text-brown/60 hover:text-primary text-[11px] font-bold disabled:opacity-30"
                     >
-                        <span className="text-xs font-bold px-1">全选</span>
+                        {editing ? '对照' : '编辑'}
                     </button>
                 </div>
             </div>
 
-            {/* 编辑区 */}
             <div className="flex-1 relative bg-bg-cream dark:bg-bg-dark min-h-0">
-                <textarea
-                    ref={textareaRef}
-                    value={text}
-                    onChange={handleChange}
-                    readOnly={!isEditable}
-                    spellCheck={false}
-                    placeholder="识别结果将显示在这里,可直接编辑,修改会自动保存。"
-                    className="w-full h-full p-6 sm:p-8 bg-transparent border-0 resize-none focus:ring-0 text-text-brown dark:text-text-cream 
-                    font-mono text-sm custom-scrollbar selection:bg-primary/30 outline-none placeholder:text-text-brown/30 dark:placeholder:text-white/20"
-                    style={{
-                        backgroundImage: 'linear-gradient(transparent 95%, rgba(197, 160, 89, 0.15) 95%)',
-                        backgroundSize: '100% 2rem',
-                        lineHeight: '2rem',
-                    }}
-                />
+                {scan.status === OCRStatus.Error ? (
+                    <div className="p-6 text-sm text-red-600 dark:text-red-400 whitespace-pre-wrap">
+                        {scan.errorMessage || text}
+                        {onRetry && (
+                            <button type="button" onClick={onRetry} className="mt-4 flex items-center gap-2 text-primary font-semibold">
+                                <RotateCcw className="w-4 h-4" /> 重新识别
+                            </button>
+                        )}
+                    </div>
+                ) : editing || !isEditable ? (
+                    <textarea
+                        ref={textareaRef}
+                        value={text}
+                        onChange={handleChange}
+                        readOnly={!isEditable}
+                        spellCheck={false}
+                        placeholder="识别结果将显示在这里,可直接编辑,修改会自动保存。"
+                        className="w-full h-full p-6 sm:p-8 bg-transparent border-0 resize-none focus:ring-0 text-text-brown dark:text-text-cream 
+                        font-mono text-sm custom-scrollbar selection:bg-primary/30 outline-none placeholder:text-text-brown/30 dark:placeholder:text-white/20"
+                        style={{
+                            backgroundImage: 'linear-gradient(transparent 95%, rgba(197, 160, 89, 0.15) 95%)',
+                            backgroundSize: '100% 2rem',
+                            lineHeight: '2rem',
+                        }}
+                    />
+                ) : (
+                    renderLinked()
+                )}
             </div>
 
-            {/* 底部操作栏 */}
             <div className="border-t border-border-sepia dark:border-border-bronze bg-surface-light dark:bg-surface-dark-lighter px-4 sm:px-6 py-3 flex justify-between items-center shrink-0 flex-wrap gap-2">
                 <div className="flex gap-2 flex-wrap">
                     <button
-                        onClick={flushPendingWithRetry}
+                        onClick={() => { pendingRef.current = { id: scan.id, text }; flushPending(); }}
                         disabled={!isEditable}
-                        className="flex items-center gap-2 px-3 py-1.5 rounded hover:bg-border-sepia/30 dark:hover:bg-white/10 text-xs font-semibold text-text-brown dark:text-text-cream transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                        title="立即保存(编辑内容也会自动保存)"
+                        className="flex items-center gap-2 px-3 py-1.5 rounded hover:bg-border-sepia/30 dark:hover:bg-white/10 text-xs font-semibold text-text-brown dark:text-text-cream disabled:opacity-30"
                     >
-                        {saveState === 'saving'
-                            ? <Loader2 className="w-4 h-4 animate-spin" />
-                            : <Save className="w-4 h-4" />}
+                        {saveState === 'saving' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                         <span>保存</span>
                     </button>
-
                     <button
                         onClick={handleGeneratePdf}
-                        disabled={isGeneratingPdf}
-                        className="flex items-center gap-2 px-3 py-1.5 rounded hover:bg-border-sepia/30 dark:hover:bg-white/10 text-xs font-semibold text-text-brown dark:text-text-cream transition-colors disabled:opacity-50"
-                        title="导出为 PDF(支持中文)"
+                        disabled={isGeneratingPdf || !isEditable}
+                        className="flex items-center gap-2 px-3 py-1.5 rounded hover:bg-border-sepia/30 dark:hover:bg-white/10 text-xs font-semibold text-text-brown dark:text-text-cream disabled:opacity-50"
+                        title="导出双层可检索 PDF"
                     >
-                        {isGeneratingPdf
-                            ? <Loader2 className="w-4 h-4 animate-spin" />
-                            : <FileText className="w-4 h-4" />}
+                        {isGeneratingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
                         <span>导出 PDF</span>
                     </button>
-
                     <button
-                        onClick={handleCopy}
-                        className={`flex items-center gap-2 px-3 py-1.5 rounded border transition-colors ${isCopied
-                            ? 'bg-green-500/10 border-green-500/20 text-green-600 dark:text-green-400'
-                            : 'bg-primary/10 hover:bg-primary/20 border-primary/20 text-primary dark:text-primary'
-                            } text-xs font-semibold`}
-                        title="复制全部文本到剪贴板"
+                        onClick={() => handleCopy()}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded border text-xs font-semibold ${
+                            isCopied
+                                ? 'bg-green-500/10 border-green-500/20 text-green-600'
+                                : 'bg-primary/10 hover:bg-primary/20 border-primary/20 text-primary'
+                        }`}
                     >
                         {isCopied ? <CheckCircle2 className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                         <span>{isCopied ? '已复制!' : '复制文本'}</span>
                     </button>
+                    {scan.status === OCRStatus.Error && onRetry && (
+                        <button onClick={onRetry} className="flex items-center gap-2 px-3 py-1.5 rounded text-xs font-semibold text-primary">
+                            <RotateCcw className="w-4 h-4" /> 重新识别
+                        </button>
+                    )}
                 </div>
-
                 <button
                     onClick={handleClear}
                     disabled={!isEditable || !text}
-                    className="flex items-center gap-2 px-3 py-1.5 rounded hover:bg-red-500/10 text-xs font-semibold text-text-brown/60 hover:text-red-600 dark:text-white/50 dark:hover:text-red-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                    title="清空识别文本"
+                    className="flex items-center gap-2 px-3 py-1.5 rounded hover:bg-red-500/10 text-xs font-semibold text-text-brown/60 hover:text-red-600 disabled:opacity-30"
                 >
                     <Trash2 className="w-4 h-4" />
                     <span className="hidden sm:inline">清空</span>

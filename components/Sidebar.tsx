@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { forwardRef, useMemo, useState } from 'react';
 import { Search, FileImage, X, Trash2, Loader2, AlertCircle } from './Icon';
 import { DocumentScan, OCRStatus } from '../types';
 import { formatDate } from '../utils';
@@ -11,24 +11,26 @@ interface SidebarProps {
     isOpen: boolean;
     onClose: () => void;
     isLoading: boolean;
+    onSearchChange?: (query: string) => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ scans, selectedId, onSelect, onDelete, isOpen, onClose, isLoading }) => {
+const Sidebar = forwardRef<HTMLInputElement, SidebarProps>(({
+    scans, selectedId, onSelect, onDelete, isOpen, onClose, isLoading, onSearchChange,
+}, searchRef) => {
     const [query, setQuery] = useState('');
 
-    // 按标题与识别文本过滤
     const filteredScans = useMemo(() => {
         const q = query.trim().toLowerCase();
         if (!q) return scans;
         return scans.filter(s =>
             s.title.toLowerCase().includes(q) ||
-            s.extractedText.toLowerCase().includes(q)
+            (s.extractedText || '').toLowerCase().includes(q) ||
+            (s.textPreview || '').toLowerCase().includes(q)
         );
     }, [scans, query]);
 
     return (
         <>
-            {/* 移动端遮罩 */}
             <div
                 className={`
                     lg:hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-40 transition-opacity duration-300
@@ -65,9 +67,13 @@ const Sidebar: React.FC<SidebarProps> = ({ scans, selectedId, onSelect, onDelete
                     <div className="relative group">
                         <Search className="absolute left-3 top-2.5 text-text-brown/40 w-4 h-4 group-focus-within:text-primary transition-colors" />
                         <input
+                            ref={searchRef}
                             type="text"
                             value={query}
-                            onChange={(e) => setQuery(e.target.value)}
+                            onChange={(e) => {
+                                setQuery(e.target.value);
+                                onSearchChange?.(e.target.value);
+                            }}
                             placeholder="搜索标题或识别内容…"
                             className="w-full pl-9 pr-8 py-2 text-sm bg-white dark:bg-bg-dark border border-border-sepia dark:border-border-bronze rounded-md 
                             text-text-brown dark:text-text-cream focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary 
@@ -75,7 +81,10 @@ const Sidebar: React.FC<SidebarProps> = ({ scans, selectedId, onSelect, onDelete
                         />
                         {query && (
                             <button
-                                onClick={() => setQuery('')}
+                                onClick={() => {
+                                    setQuery('');
+                                    onSearchChange?.('');
+                                }}
                                 className="absolute right-2 top-2 p-0.5 text-text-brown/40 hover:text-primary rounded-full"
                                 aria-label="清空搜索"
                             >
@@ -137,7 +146,7 @@ const Sidebar: React.FC<SidebarProps> = ({ scans, selectedId, onSelect, onDelete
                                 </div>
 
                                 <div className="flex-1 min-w-0">
-                                    <h4 className={`text-sm font-semibold truncate transition-colors pr-6 ${isSelected ? 'text-primary' : 'text-text-brown dark:text-text-cream group-hover:text-primary'}`}>
+                                    <h4 className={`text-sm font-semibold truncate transition-colors pr-8 ${isSelected ? 'text-primary' : 'text-text-brown dark:text-text-cream group-hover:text-primary'}`}>
                                         {scan.title}
                                     </h4>
                                     <p className="text-xs text-text-brown/50 dark:text-white/40 mt-1">
@@ -156,7 +165,11 @@ const Sidebar: React.FC<SidebarProps> = ({ scans, selectedId, onSelect, onDelete
                                         {scan.status === OCRStatus.Processing && (
                                             <>
                                                 <Loader2 className="w-3 h-3 text-primary animate-spin" />
-                                                <span className="text-[10px] text-primary font-medium tracking-wide">识别中</span>
+                                                <span className="text-[10px] text-primary font-medium tracking-wide">
+                                                    {scan.pageCount > 1
+                                                        ? `识别中 ${scan.pageDone}/${scan.pageCount} 页`
+                                                        : '识别中'}
+                                                </span>
                                             </>
                                         )}
                                         {scan.status === OCRStatus.Error && (
@@ -168,10 +181,9 @@ const Sidebar: React.FC<SidebarProps> = ({ scans, selectedId, onSelect, onDelete
                                     </div>
                                 </div>
 
-                                {/* 删除按钮(悬停显示) */}
                                 <button
                                     onClick={(e) => onDelete(scan.id, e)}
-                                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-100 dark:hover:bg-red-900/30 text-text-brown/40 dark:text-white/40 hover:text-red-600 dark:hover:text-red-400 rounded transition-all"
+                                    className="absolute top-2 right-2 opacity-80 lg:opacity-0 lg:group-hover:opacity-100 p-1.5 hover:bg-red-100 dark:hover:bg-red-900/30 text-text-brown/40 dark:text-white/40 hover:text-red-600 dark:hover:text-red-400 rounded transition-all"
                                     title="删除该记录"
                                 >
                                     <Trash2 className="w-4 h-4" />
@@ -189,6 +201,8 @@ const Sidebar: React.FC<SidebarProps> = ({ scans, selectedId, onSelect, onDelete
             </aside>
         </>
     );
-};
+});
+
+Sidebar.displayName = 'Sidebar';
 
 export default Sidebar;

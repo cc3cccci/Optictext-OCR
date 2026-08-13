@@ -4,28 +4,49 @@ export enum OCRStatus {
     Error = 'ERROR'
 }
 
-/** 单条识别分段:文本、置信度与外接矩形坐标(相对预览图的像素坐标) */
+export type LayoutMode = 'raw' | 'paragraph' | 'single';
+
+/** 单条识别分段:稳定 id 用于图文互链 */
 export interface OCRSegment {
+    id: string;
     text: string;
     confidence: number;
     box: [number, number, number, number] | null;
+    page?: number;
+}
+
+export interface ScanPage {
+    index: number;
+    imageUrl: string;
+    imageFile?: string;
+    width: number;
+    height: number;
+    segments: OCRSegment[];
 }
 
 export interface DocumentScan {
     id: string;
     title: string;
-    date: string;              // ISO 时间串
-    thumbnailUrl: string;      // 后端缩略图 URL,处理中为临时 blob URL
+    date: string;
+    thumbnailUrl: string;
     fullImageUrl: string;
     extractedText: string;
+    textPreview?: string;
     status: OCRStatus;
-    fileSize: number;          // 字节数
-    confidence: number;        // 0-100
-    processingTime: number;    // 秒
+    fileSize: number;
+    confidence: number;
+    processingTime: number;
     imageWidth: number;
     imageHeight: number;
     pageCount: number;
-    segments?: OCRSegment[];   // 选中记录时按需加载
-    /** 仅存在于前端内存的临时条目(处理中/失败),未写入后端历史 */
+    pageDone: number;
+    errorMessage?: string;
+    layoutMode: LayoutMode;
+    ignoreHeader: number;
+    ignoreFooter: number;
+    segments?: OCRSegment[];
+    pages?: ScanPage[];
+    originalFile?: string;
+    /** 仅存在于前端内存的临时条目(上传尚未拿到服务端 id) */
     isLocal?: boolean;
 }

@@ -1,4 +1,5 @@
-import { COMPRESS_MAX_SIDE, COMPRESS_TRIGGER_BYTES } from './constants';
+import { COMPRESS_MAX_SIDE, COMPRESS_TRIGGER_BYTES, DEFAULT_IGNORE } from './constants';
+import { LayoutMode, OCRSegment, ScanPage } from './types';
 
 /** 中英混合字数统计:汉字按字计,拉丁文按词计 */
 export function countWords(text: string): number {
@@ -116,4 +117,160 @@ export async function compressImageIfNeeded(file: File): Promise<File> {
     } finally {
         bitmap.close();
     }
+}
+
+function isCjkChar(ch: string): boolean {
+    return /[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/.test(ch);
+}
+
+function joinTokens(texts: string[]): string {
+    let out = '';
+    for (const raw of texts) {
+        const token = raw.trim();
+        if (!token) continue;
+        if (!out) {
+            out = token;
+            continue;
+        }
+        out += isCjkChar(out[out.length - 1]) && isCjkChar(token[0]) ? token : ` ${token}`;
+    }
+    return out;
+}
+
+export function filterIgnore(
+    segments: OCRSegment[],
+    imageHeight: number,
+    header = DEFAULT_IGNORE,
+    footer = DEFAULT_IGNORE,
+): OCRSegment[] {
+    if (!imageHeight || (header <= 0 && footer <= 0)) return segments;
+    const top = imageHeight * header;
+    const bottom = imageHeight * (1 - footer);
+    return segments.filter(seg => {
+        if (!seg.box) return true;
+        const cy = (seg.box[1] + seg.box[3]) / 2;
+        if (header > 0 && cy < top) return false;
+        if (footer > 0 && cy > bottom) return false;
+        return true;
+    });
+}
+
+interface LineCluster {
+    items: OCRSegment[];
+    cy: number;
+    h: number;
+    y0: number;
+    y1: number;
+    x0: number;
+}
+
+export function clusterLines(segments: OCRSegment[]): LineCluster[] {
+    const items = segments.filter(s => s.box);
+    const noBox = segments.filter(s => !s.box);
+    items.sort((a, b) => {
+        const ay = (a.box![1] + a.box![3]) / 2;
+        const by = (b.box![1] + b.box![3]) / 2;
+        return ay === by ? a.box![0] - b.box![0] : ay - by;
+    });
+
+    const lines: LineCluster[] = [];
+    for (const seg of items) {
+        const box = seg.box!;
+        const cy = (box[1] + box[3]) / 2;
+        const h = Math.max(1, box[3] - box[1]);
+        const hit = lines.find(line => Math.abs(cy - line.cy) < 0.55 * Math.max(h, line.h));
+        if (hit) {
+            hit.items.push(seg);
+            const n = hit.items.length;
+            hit.cy = (hit.cy * (n - 1) + cy) / n;
+            hit.h = Math.max(hit.h, h);
+            hit.y0 = Math.min(hit.y0, box[1]);
+            hit.y1 = Math.max(hit.y1, box[3]);
+            hit.x0 = Math.min(hit.x0, box[0]);
+        } else {
+            lines.push({ items: [seg], cy, h, y0: box[1], y1: box[3], x0: box[0] });
+        }
+    }
+    for (const line of lines) {
+        line.items.sort((a, b) => a.box![0] - b.box![0]);
+    }
+    if (noBox.length) {
+        lines.push({ items: noBox, cy: 1e9, h: 1, y0: 1e9, y1: 1e9, x0: 0 });
+    }
+    return lines;
+}
+
+function lineText(line: LineCluster): string {
+    return joinTokens(line.items.map(s => s.text || ''));
+}
+
+function endsSentence(text: string): boolean {
+    return /[。！？；…—”』」.!?;:)\]】》]$/.test(text);
+}
+
+export function formatLayout(segments: OCRSegment[], mode: LayoutMode): string {
+    const lines = clusterLines(segments).filter(l => lineText(l));
+    if (!lines.length) return '';
+    if (mode === 'raw') return lines.map(lineText).join('\n');
+    if (mode === 'single') return joinTokens(lines.map(lineText));
+
+    const avgH = lines.reduce((s, l) => s + Math.max(1, l.y1 - l.y0), 0) / lines.length;
+    const parts: string[] = [];
+    let buffer = lineText(lines[0]);
+    let prev = lines[0];
+    for (let i = 1; i < lines.length; i++) {
+        const ln = lines[i];
+        const gap = ln.y0 - prev.y1;
+        const indentDiff = Math.abs(ln.x0 - prev.x0);
+        const samePara = gap < 1.35 * avgH && indentDiff < 1.8 * avgH && !endsSentence(buffer);
+        const nxt = lineText(ln);
+        if (samePara) {
+            buffer += isCjkChar(buffer[buffer.length - 1]) && isCjkChar(nxt[0]) ? nxt : ` ${nxt}`;
+        } else {
+            parts.push(buffer);
+            buffer = nxt;
+        }
+        prev = ln;
+    }
+    parts.push(buffer);
+    return parts.join('\n');
+}
+
+export function layoutPageText(
+    segments: OCRSegment[],
+    imageHeight: number,
+    mode: LayoutMode,
+    header = DEFAULT_IGNORE,
+    footer = DEFAULT_IGNORE,
+): string {
+    return formatLayout(filterIgnore(segments, imageHeight, header, footer), mode);
+}
+
+export function formatScanText(
+    pages: ScanPage[] | undefined,
+    fallback: OCRSegment[] | undefined,
+    imageHeight: number,
+    mode: LayoutMode,
+    header = DEFAULT_IGNORE,
+    footer = DEFAULT_IGNORE,
+): string {
+    const src = pages && pages.length
+        ? pages
+        : [{ index: 0, imageUrl: '', width: 0, height: imageHeight, segments: fallback || [] }];
+    const texts = src.map(p => layoutPageText(p.segments || [], p.height || imageHeight, mode, header, footer));
+    if (texts.length <= 1) return texts[0] || '';
+    return texts.map((t, i) => `—— 第 ${i + 1} 页 ——\n${t}`).join('\n\n');
+}
+
+export function visibleSegments(
+    segments: OCRSegment[] | undefined,
+    imageHeight: number,
+    header = DEFAULT_IGNORE,
+    footer = DEFAULT_IGNORE,
+): OCRSegment[] {
+    return filterIgnore(segments || [], imageHeight, header, footer);
+}
+
+export function sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }

@@ -1,24 +1,26 @@
-"""SQLite 持久化层:识别历史记录与图片文件索引。
+"""SQLite 持久化层:识别历史、分页预览与原件索引。
 
-数据目录结构(容器内为 /app/data,由 docker-compose 挂载到宿主机):
+数据目录:
     data/
-      scans.db          历史记录数据库
-      images/           原图预览与缩略图文件
+      scans.db
+      images/       预览图 / 缩略图 / 分页 JPEG
+      originals/    上传原件(供重试与可检索 PDF)
 """
 import json
 import os
 import sqlite3
 import threading
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 DATA_DIR = os.environ.get(
     "DATA_DIR",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data"),
 )
 IMAGES_DIR = os.path.join(DATA_DIR, "images")
+ORIGINALS_DIR = os.path.join(DATA_DIR, "originals")
 DB_PATH = os.path.join(DATA_DIR, "scans.db")
+TEXT_PREVIEW_LEN = 160
 
-# sqlite 写操作串行化(FastAPI 会在多个线程中调用)
 _write_lock = threading.Lock()
 
 _SCHEMA = """
@@ -41,20 +43,75 @@ CREATE TABLE IF NOT EXISTS scans (
 CREATE INDEX IF NOT EXISTS idx_scans_created_at ON scans(created_at DESC);
 """
 
+_EXTRA_COLUMNS = [
+    ("page_done", "INTEGER NOT NULL DEFAULT 0"),
+    ("error_message", "TEXT NOT NULL DEFAULT ''"),
+    ("original_file", "TEXT NOT NULL DEFAULT ''"),
+    ("layout_mode", "TEXT NOT NULL DEFAULT 'paragraph'"),
+    ("ignore_header", "REAL NOT NULL DEFAULT 0.08"),
+    ("ignore_footer", "REAL NOT NULL DEFAULT 0.08"),
+    ("pages_json", "TEXT NOT NULL DEFAULT '[]'"),
+]
+
 
 def init_db() -> None:
     os.makedirs(IMAGES_DIR, exist_ok=True)
+    os.makedirs(ORIGINALS_DIR, exist_ok=True)
     with _connect() as conn:
         conn.executescript(_SCHEMA)
+        _ensure_columns(conn)
+
+
+def _ensure_columns(conn: sqlite3.Connection) -> None:
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(scans)")}
+    for name, spec in _EXTRA_COLUMNS:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE scans ADD COLUMN {name} {spec}")
 
 
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
 
-def _row_to_dict(row: sqlite3.Row, with_segments: bool) -> dict:
+def _col(row: sqlite3.Row, name: str, default: Any) -> Any:
+    try:
+        value = row[name]
+    except (IndexError, KeyError):
+        return default
+    return default if value is None else value
+
+
+def _image_url(filename: str) -> str:
+    return f"/api/images/{filename}" if filename else ""
+
+
+def _pages_from_row(row: sqlite3.Row) -> List[dict]:
+    try:
+        pages = json.loads(_col(row, "pages_json", "[]") or "[]")
+    except (ValueError, TypeError):
+        pages = []
+    public = []
+    for page in pages:
+        image_file = page.get("image_file") or ""
+        public.append({
+            "index": page.get("index", 0),
+            "image_file": image_file,
+            "image_url": _image_url(image_file),
+            "width": page.get("width") or 0,
+            "height": page.get("height") or 0,
+            "segments": page.get("segments") or [],
+        })
+    return public
+
+
+def _row_to_dict(row: sqlite3.Row, *, with_text: bool, with_segments: bool) -> dict:
+    extracted = _col(row, "extracted_text", "") or ""
     d = {
         "id": row["id"],
         "title": row["title"],
@@ -63,18 +120,31 @@ def _row_to_dict(row: sqlite3.Row, with_segments: bool) -> dict:
         "file_size": row["file_size"],
         "confidence": row["confidence"],
         "processing_time": row["processing_time"],
-        "extracted_text": row["extracted_text"],
-        "image_url": f"/api/images/{row['image_file']}" if row["image_file"] else "",
-        "thumb_url": f"/api/images/{row['thumb_file']}" if row["thumb_file"] else "",
+        "image_url": _image_url(row["image_file"]),
+        "thumb_url": _image_url(row["thumb_file"]),
+        "image_file": row["image_file"],
+        "thumb_file": row["thumb_file"],
         "image_width": row["image_width"],
         "image_height": row["image_height"],
         "page_count": row["page_count"],
+        "page_done": _col(row, "page_done", 0),
+        "error_message": _col(row, "error_message", ""),
+        "original_file": _col(row, "original_file", ""),
+        "layout_mode": _col(row, "layout_mode", "paragraph"),
+        "ignore_header": _col(row, "ignore_header", 0.08),
+        "ignore_footer": _col(row, "ignore_footer", 0.08),
+        "text_preview": extracted[:TEXT_PREVIEW_LEN],
     }
+    if with_text:
+        d["extracted_text"] = extracted
+        d["pages"] = _pages_from_row(row)
     if with_segments:
         try:
-            d["segments"] = json.loads(row["segments_json"])
+            d["segments"] = json.loads(row["segments_json"] or "[]")
         except (ValueError, TypeError):
             d["segments"] = []
+        if "pages" not in d:
+            d["pages"] = _pages_from_row(row)
     return d
 
 
@@ -84,57 +154,119 @@ def create_scan(record: dict) -> dict:
             """INSERT INTO scans
                (id, title, created_at, status, file_size, confidence, processing_time,
                 extracted_text, segments_json, image_file, thumb_file,
-                image_width, image_height, page_count)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                image_width, image_height, page_count, page_done, error_message,
+                original_file, layout_mode, ignore_header, ignore_footer, pages_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                record["id"], record["title"], record["created_at"], record["status"],
-                record["file_size"], record["confidence"], record["processing_time"],
-                record["extracted_text"], json.dumps(record.get("segments", []), ensure_ascii=False),
-                record["image_file"], record["thumb_file"],
-                record["image_width"], record["image_height"], record.get("page_count", 1),
+                record["id"], record["title"], record["created_at"],
+                record.get("status", "PROCESSING"),
+                record.get("file_size", 0),
+                record.get("confidence", 0),
+                record.get("processing_time", 0),
+                record.get("extracted_text", ""),
+                json.dumps(record.get("segments", []), ensure_ascii=False),
+                record.get("image_file", ""),
+                record.get("thumb_file", ""),
+                record.get("image_width", 0),
+                record.get("image_height", 0),
+                record.get("page_count", 1),
+                record.get("page_done", 0),
+                record.get("error_message", ""),
+                record.get("original_file", ""),
+                record.get("layout_mode", "paragraph"),
+                record.get("ignore_header", 0.08),
+                record.get("ignore_footer", 0.08),
+                json.dumps(record.get("pages", []), ensure_ascii=False),
             ),
         )
-    return get_scan(record["id"], with_segments=True)
+    return get_scan(record["id"], with_segments=True) or {}
 
 
-def list_scans() -> List[dict]:
+def update_scan_fields(scan_id: str, **fields: Any) -> Optional[dict]:
+    if not fields:
+        return get_scan(scan_id, with_segments=True)
+    allowed = {
+        "status", "file_size", "confidence", "processing_time", "extracted_text",
+        "segments_json", "image_file", "thumb_file", "image_width", "image_height",
+        "page_count", "page_done", "error_message", "original_file", "layout_mode",
+        "ignore_header", "ignore_footer", "pages_json", "title",
+    }
+    assignments = []
+    values: List[Any] = []
+    for key, value in fields.items():
+        if key == "segments":
+            key, value = "segments_json", json.dumps(value, ensure_ascii=False)
+        elif key == "pages":
+            key, value = "pages_json", json.dumps(value, ensure_ascii=False)
+        if key not in allowed:
+            continue
+        assignments.append(f"{key} = ?")
+        values.append(value)
+    if not assignments:
+        return get_scan(scan_id, with_segments=True)
+    values.append(scan_id)
+    with _write_lock, _connect() as conn:
+        cur = conn.execute(
+            f"UPDATE scans SET {', '.join(assignments)} WHERE id = ?",
+            values,
+        )
+        if cur.rowcount == 0:
+            return None
+    return get_scan(scan_id, with_segments=True)
+
+
+def list_scans(query: Optional[str] = None) -> List[dict]:
+    sql = "SELECT * FROM scans"
+    params: tuple = ()
+    if query and query.strip():
+        like = f"%{query.strip()}%"
+        sql += " WHERE title LIKE ? OR extracted_text LIKE ?"
+        params = (like, like)
+    sql += " ORDER BY created_at DESC"
     with _connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM scans ORDER BY created_at DESC"
-        ).fetchall()
-    return [_row_to_dict(r, with_segments=False) for r in rows]
+        rows = conn.execute(sql, params).fetchall()
+    return [_row_to_dict(r, with_text=False, with_segments=False) for r in rows]
 
 
 def get_scan(scan_id: str, with_segments: bool = True) -> Optional[dict]:
     with _connect() as conn:
         row = conn.execute("SELECT * FROM scans WHERE id = ?", (scan_id,)).fetchone()
-    return _row_to_dict(row, with_segments) if row else None
+    if row is None:
+        return None
+    return _row_to_dict(row, with_text=True, with_segments=with_segments)
 
 
 def update_scan_text(scan_id: str, text: str) -> Optional[dict]:
-    with _write_lock, _connect() as conn:
-        cur = conn.execute(
-            "UPDATE scans SET extracted_text = ? WHERE id = ?", (text, scan_id)
-        )
-        if cur.rowcount == 0:
-            return None
-    return get_scan(scan_id, with_segments=False)
+    return update_scan_fields(scan_id, extracted_text=text)
 
 
 def delete_scan(scan_id: str) -> bool:
-    """删除记录并清理关联的图片文件。"""
     with _write_lock, _connect() as conn:
-        row = conn.execute(
-            "SELECT image_file, thumb_file FROM scans WHERE id = ?", (scan_id,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM scans WHERE id = ?", (scan_id,)).fetchone()
         if row is None:
             return False
         conn.execute("DELETE FROM scans WHERE id = ?", (scan_id,))
 
-    for filename in (row["image_file"], row["thumb_file"]):
+    files = [row["image_file"], row["thumb_file"]]
+    try:
+        pages = json.loads(_col(row, "pages_json", "[]") or "[]")
+    except (ValueError, TypeError):
+        pages = []
+    for page in pages:
+        if page.get("image_file"):
+            files.append(page["image_file"])
+    original = _col(row, "original_file", "")
+    for filename in files:
         if not filename:
             continue
         path = os.path.join(IMAGES_DIR, filename)
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+        except OSError:
+            pass
+    if original:
+        path = os.path.join(ORIGINALS_DIR, original)
         try:
             if os.path.isfile(path):
                 os.remove(path)

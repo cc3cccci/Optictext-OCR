@@ -1,14 +1,22 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ZoomIn, ZoomOut, Maximize, RotateCw, Eye, EyeOff, FileText, Loader2 } from './Icon';
-import { DocumentScan, OCRStatus } from '../types';
+import { ZoomIn, ZoomOut, Maximize, RotateCw, Eye, EyeOff, FileText, Loader2, ChevronLeft, ChevronRight } from './Icon';
+import { DocumentScan, OCRSegment, OCRStatus } from '../types';
+import { visibleSegments } from '../utils';
 
 interface ImageViewerProps {
     scan: DocumentScan;
+    currentPage: number;
+    onPageChange: (page: number) => void;
+    selectedSegmentId: string | null;
+    onSegmentClick: (id: string) => void;
+    ignoreHeader: number;
+    ignoreFooter: number;
+    onIgnoreChange: (header: number, footer: number) => void;
+    ignoreEnabled: boolean;
 }
 
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 6;
-
 const clampScale = (s: number) => Math.min(Math.max(s, MIN_SCALE), MAX_SCALE);
 
 interface ViewState {
@@ -17,11 +25,15 @@ interface ViewState {
     y: number;
 }
 
-const ImageViewer: React.FC<ImageViewerProps> = ({ scan }) => {
+const ImageViewer: React.FC<ImageViewerProps> = ({
+    scan, currentPage, onPageChange, selectedSegmentId, onSegmentClick,
+    ignoreHeader, ignoreFooter, onIgnoreChange, ignoreEnabled,
+}) => {
     const [view, setView] = useState<ViewState>({ scale: 1, x: 0, y: 0 });
     const [rotation, setRotation] = useState(0);
     const [showBoxes, setShowBoxes] = useState(true);
     const [isDragging, setIsDragging] = useState(false);
+    const dragBand = useRef<'header' | 'footer' | null>(null);
 
     const containerRef = useRef<HTMLDivElement>(null);
     const dragStartRef = useRef({ x: 0, y: 0 });
@@ -34,13 +46,20 @@ const ImageViewer: React.FC<ImageViewerProps> = ({ scan }) => {
         lastCy: number;
     }>({ mode: null, lastX: 0, lastY: 0, lastDist: 0, lastCx: 0, lastCy: 0 });
 
-    // 切换文档时重置视图
+    const pages = scan.pages && scan.pages.length ? scan.pages : null;
+    const pageCount = Math.max(scan.pageCount || 1, pages?.length || 1);
+    const page = pages?.[currentPage];
+    const imageUrl = page?.imageUrl || scan.fullImageUrl;
+    const imageWidth = page?.width || scan.imageWidth;
+    const imageHeight = page?.height || scan.imageHeight;
+    const pageSegments: OCRSegment[] = page?.segments
+        || (scan.segments || []).filter(s => (s.page ?? 0) === currentPage);
+    const boxes = visibleSegments(pageSegments, imageHeight, ignoreEnabled ? ignoreHeader : 0, ignoreEnabled ? ignoreFooter : 0);
+
     useEffect(() => {
         setView({ scale: 1, x: 0, y: 0 });
         setRotation(0);
-    }, [scan.id]);
-
-    // ---------- 缩放/平移 ----------
+    }, [scan.id, currentPage]);
 
     const handleZoomIn = () => setView(v => ({ ...v, scale: clampScale(v.scale * 1.25) }));
     const handleZoomOut = () => setView(v => ({ ...v, scale: clampScale(v.scale / 1.25) }));
@@ -50,7 +69,6 @@ const ImageViewer: React.FC<ImageViewerProps> = ({ scan }) => {
     };
     const handleRotate = () => setRotation(r => (r + 90) % 360);
 
-    // 滚轮缩放(以光标为焦点),需 non-passive 监听以阻止页面缩放
     useEffect(() => {
         const el = containerRef.current;
         if (!el) return;
@@ -69,19 +87,33 @@ const ImageViewer: React.FC<ImageViewerProps> = ({ scan }) => {
         return () => el.removeEventListener('wheel', onWheel);
     }, []);
 
-    // 鼠标拖拽平移
     const handleMouseDown = (e: React.MouseEvent) => {
+        if (dragBand.current) return;
         setIsDragging(true);
         dragStartRef.current = { x: e.clientX - view.x, y: e.clientY - view.y };
     };
     const handleMouseMove = (e: React.MouseEvent) => {
+        if (dragBand.current && containerRef.current) {
+            const img = containerRef.current.querySelector('img');
+            if (!img) return;
+            const rect = img.getBoundingClientRect();
+            const y = (e.clientY - rect.top) / rect.height;
+            if (dragBand.current === 'header') {
+                onIgnoreChange(Math.min(0.35, Math.max(0, y)), ignoreFooter);
+            } else {
+                onIgnoreChange(ignoreHeader, Math.min(0.35, Math.max(0, 1 - y)));
+            }
+            return;
+        }
         if (!isDragging) return;
         e.preventDefault();
         setView(v => ({ ...v, x: e.clientX - dragStartRef.current.x, y: e.clientY - dragStartRef.current.y }));
     };
-    const handleMouseUp = () => setIsDragging(false);
+    const handleMouseUp = () => {
+        setIsDragging(false);
+        dragBand.current = null;
+    };
 
-    // 触摸:单指平移,双指缩放(容器 touch-none 禁用浏览器默认手势)
     const getCenterAndDist = (touches: React.TouchList) => {
         const rect = containerRef.current!.getBoundingClientRect();
         const t0 = touches[0];
@@ -133,49 +165,63 @@ const ImageViewer: React.FC<ImageViewerProps> = ({ scan }) => {
 
     const handleTouchEnd = (e: React.TouchEvent) => {
         const t = touchRef.current;
-        if (e.touches.length === 0) {
-            t.mode = null;
-        } else if (e.touches.length === 1) {
+        if (e.touches.length === 0) t.mode = null;
+        else if (e.touches.length === 1) {
             t.mode = 'pan';
             t.lastX = e.touches[0].clientX;
             t.lastY = e.touches[0].clientY;
         }
     };
 
-    // ---------- 渲染 ----------
-
     const isProcessing = scan.status === OCRStatus.Processing;
-    const hasImage = Boolean(scan.fullImageUrl);
-    const hasBoxes = scan.status === OCRStatus.Ready
-        && Boolean(scan.segments?.length)
-        && scan.imageWidth > 0
-        && scan.imageHeight > 0;
+    const hasImage = Boolean(imageUrl);
+    const hasBoxes = scan.status === OCRStatus.Ready && boxes.length > 0 && imageWidth > 0 && imageHeight > 0;
 
     return (
-        <section className="relative w-full lg:w-[45%] h-[50vh] lg:h-full flex flex-col border-b lg:border-b-0 lg:border-r border-border-sepia dark:border-border-bronze bg-bg-dark/95 dark:bg-black/40 overflow-hidden group">
-
-            {/* 悬浮工具栏 */}
+        <section className="relative w-full h-full flex flex-col border-b lg:border-b-0 bg-bg-dark/95 dark:bg-black/40 overflow-hidden group">
             <div className="absolute top-6 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1 bg-surface-dark/90 backdrop-blur-md border border-white/10 rounded-full px-2 py-1.5 shadow-xl shadow-black/40 transition-opacity duration-300 opacity-100 lg:opacity-0 lg:group-hover:opacity-100">
-                <button onClick={handleZoomOut} className="p-2 text-white/70 hover:text-primary hover:bg-white/10 rounded-full transition-colors" title="缩小">
+                {pageCount > 1 && (
+                    <>
+                        <button
+                            onClick={() => onPageChange(Math.max(0, currentPage - 1))}
+                            disabled={currentPage <= 0}
+                            className="p-2 text-white/70 hover:text-primary hover:bg-white/10 rounded-full disabled:opacity-30"
+                            title="上一页"
+                        >
+                            <ChevronLeft className="w-4 h-4" />
+                        </button>
+                        <span className="text-xs font-mono text-white/90 px-1 select-none">{currentPage + 1}/{pageCount}</span>
+                        <button
+                            onClick={() => onPageChange(Math.min(pageCount - 1, currentPage + 1))}
+                            disabled={currentPage >= pageCount - 1}
+                            className="p-2 text-white/70 hover:text-primary hover:bg-white/10 rounded-full disabled:opacity-30"
+                            title="下一页"
+                        >
+                            <ChevronRight className="w-4 h-4" />
+                        </button>
+                        <div className="w-px h-4 bg-white/20 mx-1"></div>
+                    </>
+                )}
+                <button onClick={handleZoomOut} className="p-2 text-white/70 hover:text-primary hover:bg-white/10 rounded-full" title="缩小">
                     <ZoomOut className="w-4 h-4" />
                 </button>
                 <span className="text-xs font-mono font-medium text-white/90 px-2 min-w-[3rem] text-center select-none">
                     {Math.round(view.scale * 100)}%
                 </span>
-                <button onClick={handleZoomIn} className="p-2 text-white/70 hover:text-primary hover:bg-white/10 rounded-full transition-colors" title="放大">
+                <button onClick={handleZoomIn} className="p-2 text-white/70 hover:text-primary hover:bg-white/10 rounded-full" title="放大">
                     <ZoomIn className="w-4 h-4" />
                 </button>
                 <div className="w-px h-4 bg-white/20 mx-1"></div>
-                <button onClick={handleReset} className="p-2 text-white/70 hover:text-primary hover:bg-white/10 rounded-full transition-colors" title="重置视图">
+                <button onClick={handleReset} className="p-2 text-white/70 hover:text-primary hover:bg-white/10 rounded-full" title="重置视图">
                     <Maximize className="w-4 h-4" />
                 </button>
-                <button onClick={handleRotate} className="p-2 text-white/70 hover:text-primary hover:bg-white/10 rounded-full transition-colors" title="旋转 90°">
+                <button onClick={handleRotate} className="p-2 text-white/70 hover:text-primary hover:bg-white/10 rounded-full" title="旋转 90°">
                     <RotateCw className="w-4 h-4" />
                 </button>
                 {hasBoxes && (
                     <button
                         onClick={() => setShowBoxes(s => !s)}
-                        className={`p-2 rounded-full transition-colors hover:bg-white/10 ${showBoxes ? 'text-primary' : 'text-white/70 hover:text-primary'}`}
+                        className={`p-2 rounded-full hover:bg-white/10 ${showBoxes ? 'text-primary' : 'text-white/70'}`}
                         title={showBoxes ? '隐藏识别区域' : '显示识别区域'}
                     >
                         {showBoxes ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
@@ -183,7 +229,6 @@ const ImageViewer: React.FC<ImageViewerProps> = ({ scan }) => {
                 )}
             </div>
 
-            {/* 画布 */}
             <div
                 ref={containerRef}
                 className="flex-1 overflow-hidden flex items-center justify-center p-8 viewer-canvas-bg touch-none select-none"
@@ -199,13 +244,11 @@ const ImageViewer: React.FC<ImageViewerProps> = ({ scan }) => {
             >
                 <div
                     className="relative shadow-2xl shadow-black transition-transform duration-75 ease-linear origin-center"
-                    style={{
-                        transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale}) rotate(${rotation}deg)`,
-                    }}
+                    style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale}) rotate(${rotation}deg)` }}
                 >
                     {hasImage ? (
                         <img
-                            src={scan.fullImageUrl}
+                            src={imageUrl}
                             alt={scan.title}
                             className="max-w-none w-auto h-auto max-h-[80vh] rounded-sm"
                             draggable={false}
@@ -217,28 +260,62 @@ const ImageViewer: React.FC<ImageViewerProps> = ({ scan }) => {
                         </div>
                     )}
 
-                    {/* 扫描动画:仅识别中显示 */}
                     {isProcessing && hasImage && (
                         <div className="absolute inset-x-0 bg-gradient-to-b from-primary/40 to-transparent h-1 w-full animate-scan-line pointer-events-none"></div>
                     )}
 
-                    {/* 真实识别区域覆盖层(基于后端返回的文字框坐标) */}
+                    {ignoreEnabled && hasImage && (
+                        <>
+                            <div
+                                className="absolute left-0 right-0 top-0 bg-red-500/25 border-b border-red-400/80 cursor-ns-resize z-[5]"
+                                style={{ height: `${ignoreHeader * 100}%` }}
+                                onMouseDown={(e) => {
+                                    e.stopPropagation();
+                                    dragBand.current = 'header';
+                                }}
+                                title="拖动调整忽略页眉"
+                            />
+                            <div
+                                className="absolute left-0 right-0 bottom-0 bg-red-500/25 border-t border-red-400/80 cursor-ns-resize z-[5]"
+                                style={{ height: `${ignoreFooter * 100}%` }}
+                                onMouseDown={(e) => {
+                                    e.stopPropagation();
+                                    dragBand.current = 'footer';
+                                }}
+                                title="拖动调整忽略页脚"
+                            />
+                        </>
+                    )}
+
                     {hasBoxes && showBoxes && (
                         <div className="absolute inset-0">
-                            {scan.segments!.map((seg, i) => {
+                            {boxes.map((seg) => {
                                 if (!seg.box) return null;
                                 const [x0, y0, x1, y1] = seg.box;
+                                const low = seg.confidence > 0 && seg.confidence < 0.7;
+                                const active = seg.id === selectedSegmentId;
                                 return (
-                                    <div
-                                        key={i}
-                                        className="absolute border border-primary/60 bg-primary/10 hover:bg-primary/25 hover:border-primary transition-colors rounded-[1px]"
+                                    <button
+                                        key={seg.id}
+                                        type="button"
+                                        className={`absolute border rounded-[1px] transition-colors ${
+                                            active
+                                                ? 'border-primary bg-primary/40 z-[4]'
+                                                : low
+                                                    ? 'border-amber-400/80 bg-amber-400/15 hover:bg-amber-400/30'
+                                                    : 'border-primary/60 bg-primary/10 hover:bg-primary/25 hover:border-primary'
+                                        }`}
                                         style={{
-                                            left: `${(x0 / scan.imageWidth) * 100}%`,
-                                            top: `${(y0 / scan.imageHeight) * 100}%`,
-                                            width: `${((x1 - x0) / scan.imageWidth) * 100}%`,
-                                            height: `${((y1 - y0) / scan.imageHeight) * 100}%`,
+                                            left: `${(x0 / imageWidth) * 100}%`,
+                                            top: `${(y0 / imageHeight) * 100}%`,
+                                            width: `${((x1 - x0) / imageWidth) * 100}%`,
+                                            height: `${((y1 - y0) / imageHeight) * 100}%`,
                                         }}
                                         title={seg.text}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            onSegmentClick(seg.id);
+                                        }}
                                     />
                                 );
                             })}
@@ -248,8 +325,8 @@ const ImageViewer: React.FC<ImageViewerProps> = ({ scan }) => {
             </div>
 
             <div className="absolute bottom-4 left-4 text-[10px] text-white/30 font-mono tracking-widest pointer-events-none">
-                {scan.pageCount > 1 ? `预览第 1 页 · 共 ${scan.pageCount} 页` : '原图预览'}
-                {hasBoxes && showBoxes ? ` · ${scan.segments!.length} 个识别区域` : ''}
+                {pageCount > 1 ? `预览第 ${currentPage + 1} 页 · 共 ${pageCount} 页` : '原图预览'}
+                {hasBoxes && showBoxes ? ` · ${boxes.length} 个识别区域` : ''}
             </div>
         </section>
     );

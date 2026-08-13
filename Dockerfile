@@ -32,7 +32,13 @@ COPY backend ./backend
 COPY --from=frontend-builder /app/dist ./static
 
 # 识别历史与图片存储目录(由 docker-compose 挂载持久化)
-RUN mkdir -p /app/data/images
+RUN mkdir -p /app/data/images /app/data/originals
+
+# 限制推理线程,避免弱设备上 OpenCV+ORT 把 CPU 打满
+ENV OMP_NUM_THREADS=2 \
+    ORT_INTRA_OP=2 \
+    OPENCV_FOR_THREADS_NUM=2 \
+    MKL_NUM_THREADS=2
 
 EXPOSE 8000
 

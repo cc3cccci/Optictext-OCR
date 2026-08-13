@@ -34,4 +34,7 @@ export {
     ImagePlus,
     Timer,
     Gauge,
+    Camera,
+    ChevronLeft,
+    RotateCcw,
 } from 'lucide-react';
