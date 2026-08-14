@@ -41,6 +41,10 @@
 
 设备要求:aarch64、Docker + compose v2、可用内存 ≥ 1GB、磁盘空闲 ≥ 4GB。
 
+### 方式一:在设备上构建(`deploy.py`)
+
+上传源码到设备,在设备上构建镜像并启动。
+
 ```bash
 pip install paramiko scp requests
 
@@ -50,6 +54,20 @@ python deploy.py                              # 首次连接未知主机可加 -
 ```
 
 完成后访问 `http://192.168.50.35:9999`。
+
+### 方式二:在 Mac mini 上构建镜像,离线传到设备直接部署(`deploy_image.sh`)
+
+设备端**不构建**,只 `docker load` + `compose up`。适合弱设备或设备访问不了 Docker Hub 的情况。
+Apple Silicon 的 Mac mini 原生构建 arm64;Intel Mac 需 Docker Desktop 已启用 QEMU。
+
+```bash
+export DEPLOY_SSH_KEY="$HOME/.ssh/id_rsa"     # 或 DEPLOY_PASSWORD='你的SSH密码'(需 sshpass)
+./deploy_image.sh --check                     # 检查设备架构/docker/compose/端口
+./deploy_image.sh                             # 本机构建 arm64 → docker save → scp → 设备 load → 启动
+```
+
+脚本会用 `docker-compose.deploy.yml`(仅镜像、`pull_policy: never`)在设备上起容器,并等待 `/api/health` 就绪。
+可用 `--host / --user / --ssh-port / --remote-dir / --platform / --skip-build / --insecure` 覆盖默认值。
 
 交给本机可 SSH 的 Agent 时,请使用仓库根目录 [`DEPLOY_HANDOFF.md`](DEPLOY_HANDOFF.md):内含预检、部署、异步验收、回滚与故障排查的完整命令。
 
