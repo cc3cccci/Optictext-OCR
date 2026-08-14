@@ -10,21 +10,23 @@ export default {
   theme: {
     extend: {
       colors: {
-        primary: '#0F766E',
-        'primary-dark': '#115E59',
-        'primary-light': '#2DD4BF',
-        bg: '#F6F7F9',
-        'bg-dark': '#0B1220',
-        surface: '#FFFFFF',
-        'surface-dark': '#152033',
-        'surface-2': '#EEF1F4',
-        'surface-2-dark': '#1C2A40',
-        ink: '#0F172A',
-        'ink-dark': '#E8EEF6',
-        muted: '#64748B',
-        'muted-dark': '#94A3B8',
-        line: '#E2E8F0',
-        'line-dark': '#243044',
+        // Quiet Surface (Coffee Minimal) — warm restrained palette.
+        // espresso solid for primary chrome; amber (Tailwind scale) for accents.
+        primary: '#4E3B2C',
+        'primary-dark': '#3C2D21',
+        'primary-light': '#C79A63',
+        bg: '#F2ECE1',
+        'bg-dark': '#161311',
+        surface: '#FCFAF4',
+        'surface-dark': '#211B15',
+        'surface-2': '#E9E0D0',
+        'surface-2-dark': '#2B241B',
+        ink: '#2B2119',
+        'ink-dark': '#F0E8DA',
+        muted: '#7C6C56',
+        'muted-dark': '#AD9E88',
+        line: '#E4D9C6',
+        'line-dark': '#372E23',
       },
       fontFamily: {
         sans: [
@@ -36,9 +38,16 @@ export default {
           'ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas',
           '"PingFang SC"', '"Microsoft YaHei"', 'monospace',
         ],
+        // literary display serif for titles / metrics
         serif: [
-          'Georgia', '"Times New Roman"', '"Songti SC"', 'SimSun', 'serif',
+          '"Iowan Old Style"', '"Palatino Linotype"', 'Palatino',
+          '"Songti SC"', 'Georgia', 'serif',
         ],
+      },
+      borderRadius: {
+        xl: '14px',
+        '2xl': '22px',
+        '3xl': '28px',
       },
       animation: {
         'scan-line': 'scan 3s ease-in-out infinite',
@@ -52,7 +61,12 @@ export default {
         },
       },
       boxShadow: {
-        panel: '0 1px 2px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.04)',
+        panel: '0 1px 2px rgba(52, 38, 24, 0.05), 0 8px 24px rgba(52, 38, 24, 0.05)',
+        card: '0 1px 2px rgba(52, 38, 24, 0.04), 0 10px 30px -14px rgba(52, 38, 24, 0.18)',
+        lift: '0 2px 6px rgba(52, 38, 24, 0.06), 0 16px 40px -18px rgba(52, 38, 24, 0.28)',
+      },
+      transitionTimingFunction: {
+        quiet: 'cubic-bezier(0.22, 1, 0.36, 1)',
       },
     },
   },

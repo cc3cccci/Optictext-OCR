@@ -421,9 +421,11 @@ const App: React.FC = () => {
 
             {isDragOver && (
                 <div className="fixed inset-0 z-[100] bg-primary/15 backdrop-blur-sm flex items-center justify-center pointer-events-none">
-                    <div className="bg-surface dark:bg-surface-dark border-2 border-dashed border-primary rounded-2xl px-12 py-10 text-center shadow-2xl">
-                        <UploadCloud className="w-12 h-12 text-primary mx-auto mb-3" />
-                        <p className="text-lg font-semibold">松开鼠标开始识别</p>
+                    <div className="bg-surface dark:bg-surface-dark border-2 border-dashed border-amber-500/60 rounded-2xl px-12 py-10 text-center shadow-lift">
+                        <span className="inline-flex w-16 h-16 rounded-2xl bg-amber-500/15 text-amber-600 dark:text-amber-400 items-center justify-center mx-auto mb-3">
+                            <UploadCloud className="w-9 h-9" />
+                        </span>
+                        <p className="font-serif text-xl font-semibold">松开鼠标开始识别</p>
                         <p className="text-sm text-muted mt-1">支持图片与 PDF,可一次拖入多个文件</p>
                     </div>
                 </div>

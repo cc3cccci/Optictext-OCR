@@ -1,0 +1,16 @@
+[
+  { "query": "用 Quiet Desk 的风格做一个 CRM 客户列表", "should_trigger": true },
+  { "query": "make this dashboard look like Quiet Desk", "should_trigger": true },
+  { "query": "Coffee Minimal look for our admin panel", "should_trigger": true },
+  { "query": "adapt this warm minimal design to a SaaS settings page", "should_trigger": true },
+  { "query": "restrained product UI for a pipeline kanban", "should_trigger": true },
+  { "query": "landing page with soft cards and amber accents no purple", "should_trigger": true },
+  { "query": "port Quiet Surface tokens into a new Next app", "should_trigger": true },
+  { "query": "calm warm UI for docs site", "should_trigger": true },
+  { "query": "build a neon cyberpunk game HUD", "should_trigger": false },
+  { "query": "fix this SQL query", "should_trigger": false },
+  { "query": "3D first-person shooter controls", "should_trigger": false },
+  { "query": "what is the weather in LA", "should_trigger": false },
+  { "query": "optimize postgres indexes", "should_trigger": false },
+  { "query": "write unit tests for a pure function", "should_trigger": false }
+]

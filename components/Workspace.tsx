@@ -164,7 +164,7 @@ const Workspace: React.FC<WorkspaceProps> = ({
                     </span>
                 )}
                 {scan.status === OCRStatus.Processing && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-300">
                         <Loader2 className="w-3 h-3 animate-spin" />
                         {scan.pageCount > 1 ? `${scan.pageDone}/${scan.pageCount}` : '识别中'}
                     </span>
@@ -197,10 +197,10 @@ const Workspace: React.FC<WorkspaceProps> = ({
                         <RotateCcw className="w-3.5 h-3.5" /> 重试
                     </button>
                 )}
-                <button type="button" onClick={onExportTxt} className="hidden sm:flex items-center gap-1 px-3 h-8 rounded-xl bg-primary text-white text-xs font-semibold">
+                <button type="button" onClick={onExportTxt} className="hidden sm:flex items-center gap-1 px-3.5 h-8 rounded-full bg-primary text-white text-xs font-semibold shadow-card transition-colors duration-200 ease-quiet hover:bg-primary-dark">
                     <Download className="w-3.5 h-3.5" /> TXT
                 </button>
-                <button type="button" onClick={exportMd} className="hidden sm:flex items-center gap-1 px-3 h-8 rounded-xl border border-line dark:border-line-dark text-xs font-semibold">
+                <button type="button" onClick={exportMd} className="hidden sm:flex items-center gap-1 px-3.5 h-8 rounded-full border border-line dark:border-line-dark text-xs font-semibold transition-colors duration-200 ease-quiet hover:border-primary hover:text-primary">
                     MD
                 </button>
                 <button type="button" onClick={() => void share()} className="p-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/10" title="分享">

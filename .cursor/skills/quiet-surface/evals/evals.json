@@ -1,0 +1,47 @@
+{
+  "skill_name": "quiet-surface",
+  "version": "1.0.0",
+  "evals": [
+    {
+      "id": 1,
+      "name": "crm-contacts-list",
+      "prompt": "Build a CRM contacts list page that looks like Quiet Desk — warm calm UI, not purple SaaS. Include search, status filters, a dense table, and a primary New Contact button.",
+      "expected_output": "List page mode + compact density; semantic tokens only; espresso primary button; status pills mapped to good/warning/amber/muted; table with soft row hover; no marketing hero.",
+      "files": [],
+      "assertions": [
+        "Uses List (or App shell + List) page mode, not Landing hero as main chrome",
+        "Primary action uses espresso solid styling language",
+        "No raw palette hex in component styles",
+        "Status colors limited to semantic tokens (good/warning/amber/muted/sage)",
+        "Density is compact or explicitly justified"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "saas-marketing-landing",
+      "prompt": "Create a marketing landing page for a notes app using the Quiet Desk visual style: serif titles, soft cards, one CTA.",
+      "expected_output": "Landing mode + comfortable density; hero with one primary CTA; feature cards; warm neutrals; amber accents on icons.",
+      "files": [],
+      "assertions": [
+        "Landing page mode with single dominant hero CTA",
+        "Comfortable density / generous section spacing",
+        "Card radius in 20–24px range or equivalent soft cards",
+        "Display serif or dual type roles respected",
+        "No neon gradient or emoji icons"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "settings-form",
+      "prompt": "Design account settings (profile + notifications) in Coffee Minimal / Quiet Surface style.",
+      "expected_output": "Form/settings mode; grouped fields; primary Save + ghost Cancel; quiet labels; tokenized inputs.",
+      "files": [],
+      "assertions": [
+        "Form/settings mode (not dashboard metric spam)",
+        "Grouped sections with clear save action hierarchy",
+        "Inputs use border/surface/focus-ring token roles",
+        "Destructive actions are not the default primary"
+      ]
+    }
+  ]
+}

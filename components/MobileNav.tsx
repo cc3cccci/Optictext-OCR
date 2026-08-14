@@ -14,7 +14,7 @@ const MobileNav: React.FC<MobileNavProps> = ({ view, onLibrary, onCamera, onSear
             <button
                 type="button"
                 onClick={onLibrary}
-                className={`flex flex-col items-center gap-1 text-[11px] ${view === 'library' ? 'text-primary' : 'text-muted'}`}
+                className={`flex flex-col items-center gap-1 text-[11px] ${view === 'library' ? 'text-amber-600 dark:text-amber-400' : 'text-muted'}`}
             >
                 <LayoutGrid className="w-5 h-5" />
                 库

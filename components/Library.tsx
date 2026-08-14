@@ -98,14 +98,14 @@ const Library: React.FC<LibraryProps> = ({
             <div className="px-4 sm:px-6 pt-4 pb-3 shrink-0 space-y-3">
                 <div className="flex items-end justify-between gap-3">
                     <div>
-                        <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-ink dark:text-ink-dark">文档库</h1>
+                        <h1 className="font-serif text-2xl sm:text-3xl font-semibold tracking-tight text-ink dark:text-ink-dark">文档库</h1>
                         <p className="text-xs text-muted dark:text-muted-dark mt-1">
                             {isLoading && scans.length === 0 ? '正在加载…' : `${filtered.length} 份文档`}
                         </p>
                     </div>
                     <div className="hidden sm:flex gap-2">
-                        <button type="button" onClick={onPaste} className="px-3 py-2 rounded-xl border border-line dark:border-line-dark text-sm hover:border-primary hover:text-primary">粘贴</button>
-                        <button type="button" onClick={onUpload} className="px-3 py-2 rounded-xl bg-primary text-white text-sm font-medium hover:bg-primary-dark">上传</button>
+                        <button type="button" onClick={onPaste} className="px-4 py-2 rounded-full border border-line dark:border-line-dark text-sm transition-colors duration-200 ease-quiet hover:border-primary hover:text-primary">粘贴</button>
+                        <button type="button" onClick={onUpload} className="px-4 py-2 rounded-full bg-primary text-white text-sm font-medium shadow-card transition-all duration-200 ease-quiet hover:bg-primary-dark hover:-translate-y-px">上传</button>
                     </div>
                 </div>
 
@@ -116,7 +116,7 @@ const Library: React.FC<LibraryProps> = ({
                         value={query}
                         onChange={e => onQueryChange(e.target.value)}
                         placeholder="搜索标题或识别内容…"
-                        className="w-full pl-9 pr-9 py-2.5 rounded-xl bg-surface dark:bg-surface-dark border border-line dark:border-line-dark text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        className="w-full pl-9 pr-9 py-2.5 rounded-full bg-surface dark:bg-surface-dark border border-line dark:border-line-dark text-sm transition-shadow focus:outline-none focus:ring-2 focus:ring-amber-500/40 focus:border-amber-500/40"
                     />
                     {query && (
                         <button type="button" onClick={() => onQueryChange('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-ink dark:hover:text-ink-dark" aria-label="清空搜索">
@@ -131,10 +131,10 @@ const Library: React.FC<LibraryProps> = ({
                             key={item.id}
                             type="button"
                             onClick={() => onFilter(item.id)}
-                            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border ${
+                            className={`shrink-0 px-3.5 py-1.5 rounded-full text-xs font-medium border transition-colors duration-200 ease-quiet ${
                                 filter === item.id
-                                    ? 'bg-primary text-white border-primary'
-                                    : 'bg-surface dark:bg-surface-dark border-line dark:border-line-dark text-muted dark:text-muted-dark'
+                                    ? 'bg-amber-500/15 text-amber-800 dark:text-amber-200 border-amber-500/40'
+                                    : 'bg-surface dark:bg-surface-dark border-line dark:border-line-dark text-muted dark:text-muted-dark hover:border-primary/40'
                             }`}
                         >
                             {item.label}
@@ -145,9 +145,9 @@ const Library: React.FC<LibraryProps> = ({
                             key={tag}
                             type="button"
                             onClick={() => onTagFilter(tagFilter === tag ? null : tag)}
-                            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border ${
+                            className={`shrink-0 px-3.5 py-1.5 rounded-full text-xs font-medium border transition-colors duration-200 ease-quiet ${
                                 tagFilter === tag
-                                    ? 'border-primary bg-primary/10 text-primary'
+                                    ? 'border-amber-500/40 bg-amber-500/15 text-amber-800 dark:text-amber-200'
                                     : `border-transparent ${tagClass(tag)}`
                             }`}
                         >
@@ -223,10 +223,10 @@ const Library: React.FC<LibraryProps> = ({
                                 return (
                                     <article
                                         key={scan.id}
-                                        className={`group relative flex gap-3 p-3 rounded-2xl border bg-surface dark:bg-surface-dark cursor-pointer transition-colors ${
+                                        className={`group relative flex gap-3 p-3.5 rounded-2xl border bg-surface dark:bg-surface-dark cursor-pointer shadow-card transition-all duration-200 ease-quiet hover:-translate-y-0.5 hover:shadow-lift ${
                                             selected
                                                 ? 'border-primary ring-1 ring-primary/30'
-                                                : 'border-line dark:border-line-dark hover:border-primary/50'
+                                                : 'border-line dark:border-line-dark hover:border-primary/40'
                                         }`}
                                         onClick={() => (selecting ? onToggleSelect(scan.id) : onOpen(scan.id))}
                                     >
@@ -285,8 +285,8 @@ const Library: React.FC<LibraryProps> = ({
                                                 <HighlightText text={scan.textPreview || scan.extractedText || ''} query={query} />
                                             </p>
                                             <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-                                                {scan.status === OCRStatus.Ready && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />}
-                                                {scan.status === OCRStatus.Processing && <Loader2 className="w-3 h-3 text-primary animate-spin" />}
+                                                {scan.status === OCRStatus.Ready && <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />}
+                                                {scan.status === OCRStatus.Processing && <Loader2 className="w-3 h-3 text-amber-600 dark:text-amber-400 animate-spin" />}
                                                 {scan.status === OCRStatus.Error && <AlertCircle className="w-3 h-3 text-red-500" />}
                                                 <span className="text-[10px] text-muted">
                                                     {scan.status === OCRStatus.Processing
