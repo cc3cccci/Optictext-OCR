@@ -317,13 +317,12 @@ export function groupScansByDate(scans: DocumentScan[]): DateGroup[] {
     return groups;
 }
 
+// Quiet Surface: restrained warm chips (amber / sage / stone), no rainbow.
 const TAG_COLORS = [
-    'bg-teal-500/15 text-teal-800 dark:text-teal-200',
-    'bg-sky-500/15 text-sky-800 dark:text-sky-200',
-    'bg-violet-500/15 text-violet-800 dark:text-violet-200',
     'bg-amber-500/15 text-amber-800 dark:text-amber-200',
-    'bg-rose-500/15 text-rose-800 dark:text-rose-200',
-    'bg-lime-500/15 text-lime-800 dark:text-lime-200',
+    'bg-primary/10 text-primary dark:bg-primary-light/15 dark:text-primary-light',
+    'bg-emerald-600/12 text-emerald-800 dark:text-emerald-300',
+    'bg-stone-500/15 text-stone-700 dark:text-stone-300',
 ];
 
 export function tagClass(tag: string): string {

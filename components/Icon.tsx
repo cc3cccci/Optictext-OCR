@@ -43,4 +43,6 @@ export {
     CheckSquare,
     Highlighter,
     LayoutGrid,
+    Palette,
+    Check,
 } from 'lucide-react';

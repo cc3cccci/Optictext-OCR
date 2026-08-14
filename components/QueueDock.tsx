@@ -23,9 +23,9 @@ const QueueDock: React.FC<QueueDockProps> = ({ queue, nowTs, onOpen }) => {
                             key={scan.id}
                             type="button"
                             onClick={() => onOpen(scan.id)}
-                            className={`shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs ${
+                            className={`shrink-0 flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs transition-colors duration-200 ease-quiet ${
                                 running
-                                    ? 'border-primary/40 bg-primary/10 text-primary'
+                                    ? 'border-amber-500/40 bg-amber-500/15 text-amber-700 dark:text-amber-300'
                                     : 'border-line dark:border-line-dark text-muted'
                             }`}
                         >

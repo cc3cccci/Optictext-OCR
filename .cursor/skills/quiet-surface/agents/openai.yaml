@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quiet Surface"
+  short_description: "Port Quiet Desk / Coffee Minimal calm UI to most websites"
+  default_prompt: "Use $quiet-surface to design this product UI in the Quiet Desk / Coffee Minimal style (semantic tokens, correct page mode, no purple SaaS slop)."

@@ -90,7 +90,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose, scans, a
             <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
             <div className="relative w-full max-w-lg rounded-2xl bg-surface dark:bg-surface-dark border border-line dark:border-line-dark shadow-2xl overflow-hidden">
                 <div className="flex items-center gap-2 px-4 border-b border-line dark:border-line-dark">
-                    <Command className="w-4 h-4 text-primary shrink-0" />
+                    <Command className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
                     <input
                         ref={inputRef}
                         value={query}
@@ -110,7 +110,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose, scans, a
                                     <button
                                         key={scan.id}
                                         type="button"
-                                        className={`w-full text-left px-3 py-2 rounded-xl text-sm ${active ? 'bg-primary/10 text-primary' : 'hover:bg-black/5 dark:hover:bg-white/5'}`}
+                                        className={`w-full text-left px-3 py-2 rounded-xl text-sm ${active ? 'bg-amber-500/12 text-amber-800 dark:text-amber-200' : 'hover:bg-primary/5 dark:hover:bg-white/5'}`}
                                         onMouseEnter={() => setIndex(i)}
                                         onClick={() => { onOpenScan(scan.id); onClose(); }}
                                     >
@@ -131,7 +131,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({ open, onClose, scans, a
                                     <button
                                         key={action.id}
                                         type="button"
-                                        className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm ${active ? 'bg-primary/10 text-primary' : 'hover:bg-black/5 dark:hover:bg-white/5'}`}
+                                        className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm ${active ? 'bg-amber-500/12 text-amber-800 dark:text-amber-200' : 'hover:bg-primary/5 dark:hover:bg-white/5'}`}
                                         onMouseEnter={() => setIndex(row)}
                                         onClick={() => { action.run(); onClose(); }}
                                     >

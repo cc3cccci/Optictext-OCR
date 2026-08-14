@@ -10,21 +10,27 @@ export default {
   theme: {
     extend: {
       colors: {
-        primary: '#0F766E',
-        'primary-dark': '#115E59',
-        'primary-light': '#2DD4BF',
-        bg: '#F6F7F9',
-        'bg-dark': '#0B1220',
-        surface: '#FFFFFF',
-        'surface-dark': '#152033',
-        'surface-2': '#EEF1F4',
-        'surface-2-dark': '#1C2A40',
-        ink: '#0F172A',
-        'ink-dark': '#E8EEF6',
-        muted: '#64748B',
-        'muted-dark': '#94A3B8',
-        line: '#E2E8F0',
-        'line-dark': '#243044',
+        // Quiet Surface (Coffee Minimal) — semantic tokens driven by the
+        // colorway CSS variables in index.css (8 palettes). espresso-family
+        // solid for primary chrome; amber (Tailwind scale) is the single accent.
+        // The legacy `*-dark` names resolve to the SAME vars so existing
+        // `dark:` variants stay consistent when a dark colorway is active.
+        primary: 'rgb(var(--c-primary) / <alpha-value>)',
+        'primary-dark': 'rgb(var(--c-primary-dark) / <alpha-value>)',
+        'primary-light': 'rgb(var(--c-primary-light) / <alpha-value>)',
+        'on-primary': 'rgb(var(--c-on-primary) / <alpha-value>)',
+        bg: 'rgb(var(--c-bg) / <alpha-value>)',
+        'bg-dark': 'rgb(var(--c-bg) / <alpha-value>)',
+        surface: 'rgb(var(--c-surface) / <alpha-value>)',
+        'surface-dark': 'rgb(var(--c-surface) / <alpha-value>)',
+        'surface-2': 'rgb(var(--c-surface-2) / <alpha-value>)',
+        'surface-2-dark': 'rgb(var(--c-surface-2) / <alpha-value>)',
+        ink: 'rgb(var(--c-ink) / <alpha-value>)',
+        'ink-dark': 'rgb(var(--c-ink) / <alpha-value>)',
+        muted: 'rgb(var(--c-muted) / <alpha-value>)',
+        'muted-dark': 'rgb(var(--c-muted) / <alpha-value>)',
+        line: 'rgb(var(--c-line) / <alpha-value>)',
+        'line-dark': 'rgb(var(--c-line) / <alpha-value>)',
       },
       fontFamily: {
         sans: [
@@ -36,9 +42,16 @@ export default {
           'ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas',
           '"PingFang SC"', '"Microsoft YaHei"', 'monospace',
         ],
+        // literary display serif for titles / metrics
         serif: [
-          'Georgia', '"Times New Roman"', '"Songti SC"', 'SimSun', 'serif',
+          '"Iowan Old Style"', '"Palatino Linotype"', 'Palatino',
+          '"Songti SC"', 'Georgia', 'serif',
         ],
+      },
+      borderRadius: {
+        xl: '14px',
+        '2xl': '22px',
+        '3xl': '28px',
       },
       animation: {
         'scan-line': 'scan 3s ease-in-out infinite',
@@ -52,7 +65,12 @@ export default {
         },
       },
       boxShadow: {
-        panel: '0 1px 2px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.04)',
+        panel: '0 1px 2px rgba(52, 38, 24, 0.05), 0 8px 24px rgba(52, 38, 24, 0.05)',
+        card: '0 1px 2px rgba(52, 38, 24, 0.04), 0 10px 30px -14px rgba(52, 38, 24, 0.18)',
+        lift: '0 2px 6px rgba(52, 38, 24, 0.06), 0 16px 40px -18px rgba(52, 38, 24, 0.28)',
+      },
+      transitionTimingFunction: {
+        quiet: 'cubic-bezier(0.22, 1, 0.36, 1)',
       },
     },
   },

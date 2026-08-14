@@ -257,8 +257,10 @@ const TextPanel: React.FC<TextPanelProps> = ({
         <section className="flex-1 flex flex-col bg-bg dark:bg-surface-dark relative z-0 min-h-0">
             <div className="flex items-center justify-between px-4 sm:px-6 py-3 border-b border-line dark:border-line-dark shrink-0 bg-surface dark:bg-surface-2-dark/40 gap-2 flex-wrap">
                 <div className="flex items-center gap-2.5">
-                    <Type className="text-primary w-5 h-5" />
-                    <h3 className="text-xs font-bold uppercase tracking-widest text-muted dark:text-primary-light/80">
+                    <span className="inline-flex w-7 h-7 rounded-lg bg-amber-500/15 text-amber-600 dark:text-amber-400 items-center justify-center">
+                        <Type className="w-4 h-4" />
+                    </span>
+                    <h3 className="text-xs font-bold uppercase tracking-widest text-muted dark:text-primary-light">
                         {reading ? '阅读' : '识别文本'}
                     </h3>
                 </div>
@@ -311,7 +313,7 @@ const TextPanel: React.FC<TextPanelProps> = ({
                         className="w-full h-full p-6 sm:p-8 bg-transparent border-0 resize-none focus:ring-0 text-ink dark:text-ink-dark 
                         font-mono text-sm selection:bg-primary/30 outline-none placeholder:text-muted"
                         style={{
-                            backgroundImage: 'linear-gradient(transparent 95%, rgba(15, 118, 110, 0.12) 95%)',
+                            backgroundImage: 'linear-gradient(transparent 95%, rgba(120, 90, 60, 0.14) 95%)',
                             backgroundSize: '100% 2rem',
                             lineHeight: '2rem',
                         }}

@@ -178,7 +178,7 @@ const ImageViewer: React.FC<ImageViewerProps> = ({
     const hasBoxes = scan.status === OCRStatus.Ready && boxes.length > 0 && imageWidth > 0 && imageHeight > 0;
 
     return (
-        <section className="relative w-full h-full flex flex-col border-b lg:border-b-0 bg-[#0b1220] overflow-hidden group">
+        <section className="relative w-full h-full flex flex-col border-b lg:border-b-0 bg-[#161311] overflow-hidden group">
             <div className="absolute top-6 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1 bg-black/70 backdrop-blur-md border border-white/10 rounded-full px-2 py-1.5 shadow-xl shadow-black/40 transition-opacity duration-300 opacity-100 lg:opacity-0 lg:group-hover:opacity-100">
                 {pageCount > 1 && (
                     <>
