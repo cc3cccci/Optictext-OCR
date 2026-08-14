@@ -7,8 +7,8 @@ export default defineConfig({
     port: 3000,
     host: '0.0.0.0',
     proxy: {
-      // 开发模式下代理到本地后端
-      '/api': {
+      // 只代理 /api/ 接口,避免把根目录模块 /api.ts 转发给后端
+      '/api/': {
         target: 'http://localhost:8000',
         changeOrigin: true,
       },
