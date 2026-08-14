@@ -33,9 +33,16 @@ backend/.venv/bin/uvicorn main:app --reload --port 8000   # 在 backend/ 目录�
 
 ### UI 设计语言(Quiet Surface)
 
-前端 UI 采用 **Quiet Surface / Coffee Minimal** 暖色极简设计语言(skill 装在 `.cursor/skills/quiet-surface/`)。核心约定:语义色令牌集中在 `tailwind.config.js`(暖中性 + espresso 实心主色 `primary` + amber 强调,组件不写裸 hex);标题用 `font-serif`;卡片 22px 圆角 + `shadow-card`;主按钮 pill 实心 espresso;强调/激活态用 amber(Tailwind `amber-*`)。改配色改令牌即可全局生效,别在组件里硬编码颜色。
+前端 UI 采用 **Quiet Surface / Coffee Minimal** 暖色极简设计语言(skill 装在 `.cursor/skills/quiet-surface/`)。核心约定:标题用 `font-serif`;卡片 22px 圆角 + `shadow-card`;主按钮 pill 实心 `primary`;amber(Tailwind `amber-*`)是唯一强调色。组件只消费语义令牌,**不写裸 hex**。
 
-**注意:改了 `tailwind.config.js` 后,Vite 的 HMR 不一定能热更新配置,需要重启 dev server(`npm run dev`)才能看到新令牌生效**;改组件类名/`index.css` 则可正常热更新。
+**配色令牌 = CSS 变量驱动的 colorway 系统**(共 8 套:Latte/Honey/Clay 浅暖、Mist/Sage/Plum 浅冷、Charcoal 深暖、Slate 深冷):
+
+- 调色板 hex 只在 `index.css` 的 `[data-colorway='…']` 里,写成空格分隔的 RGB 通道(`--c-bg: 242 236 225;`),这样 `bg-primary/10` 这类透明度工具类仍可用。
+- `tailwind.config.js` 把语义令牌映射到 `rgb(var(--c-*) / <alpha-value>)`;遗留的 `*-dark` 名指向同一批变量,所以旧的 `dark:` 变体在深色 colorway 下仍一致。
+- 主按钮文字用 `text-on-primary`(随 colorway 翻转深浅),不要写死 `text-white`。
+- colorway 元数据在 `theme.ts`;`hooks/useTheme.ts` 负责写 `data-colorway` 属性 + 深色套加 `.dark` 类,并记忆上次浅/深选择;`index.html` 里有一段 pre-paint 脚本避免首屏闪色。新增一套主题:在 `index.css` 加变量块 + 在 `theme.ts` 的 `COLORWAYS` 加一项即可。
+
+**注意:改了 `tailwind.config.js` 后,Vite 的 HMR 不一定能热更新配置,需要重启 dev server(`npm run dev`)才能看到新令牌生效**;改组件类名/`index.css`/新增 colorway 变量则可正常热更新。
 
 ### Lint / 测试 / 构建 速查
 
