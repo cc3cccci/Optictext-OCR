@@ -31,6 +31,12 @@ backend/.venv/bin/uvicorn main:app --reload --port 8000   # 在 backend/ 目录�
 
 识别历史存在 `data/`(SQLite `scans.db` + `images/` + `originals/`),已在 `.gitignore` 中忽略。删除 `data/` 即清空历史;测试脚本会自行清理自己创建的数据。
 
+### UI 设计语言(Quiet Surface)
+
+前端 UI 采用 **Quiet Surface / Coffee Minimal** 暖色极简设计语言(skill 装在 `.cursor/skills/quiet-surface/`)。核心约定:语义色令牌集中在 `tailwind.config.js`(暖中性 + espresso 实心主色 `primary` + amber 强调,组件不写裸 hex);标题用 `font-serif`;卡片 22px 圆角 + `shadow-card`;主按钮 pill 实心 espresso;强调/激活态用 amber(Tailwind `amber-*`)。改配色改令牌即可全局生效,别在组件里硬编码颜色。
+
+**注意:改了 `tailwind.config.js` 后,Vite 的 HMR 不一定能热更新配置,需要重启 dev server(`npm run dev`)才能看到新令牌生效**;改组件类名/`index.css` 则可正常热更新。
+
 ### Lint / 测试 / 构建 速查
 
 - 前端类型检查:`npx tsc --noEmit`;前端构建:`npm run build`。
