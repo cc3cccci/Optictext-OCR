@@ -105,7 +105,7 @@ const Library: React.FC<LibraryProps> = ({
                     </div>
                     <div className="hidden sm:flex gap-2">
                         <button type="button" onClick={onPaste} className="px-4 py-2 rounded-full border border-line dark:border-line-dark text-sm transition-colors duration-200 ease-quiet hover:border-primary hover:text-primary">粘贴</button>
-                        <button type="button" onClick={onUpload} className="px-4 py-2 rounded-full bg-primary text-white text-sm font-medium shadow-card transition-all duration-200 ease-quiet hover:bg-primary-dark hover:-translate-y-px">上传</button>
+                        <button type="button" onClick={onUpload} className="px-4 py-2 rounded-full bg-primary text-on-primary text-sm font-medium shadow-card transition-all duration-200 ease-quiet hover:bg-primary-dark hover:-translate-y-px">上传</button>
                     </div>
                 </div>
 

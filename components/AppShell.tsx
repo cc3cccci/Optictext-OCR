@@ -1,9 +1,12 @@
 import React from 'react';
 import { Camera, ClipboardPaste, Moon, Scan, Search, Sun, UploadCloud } from './Icon';
+import ColorwayPicker from './ColorwayPicker';
 
 interface AppShellProps {
     isDarkMode: boolean;
     onToggleTheme: () => void;
+    colorway: string;
+    onColorway: (id: string) => void;
     onLibrary: () => void;
     onPaste: () => void;
     onUpload: () => void;
@@ -13,12 +16,12 @@ interface AppShellProps {
 }
 
 const AppShell: React.FC<AppShellProps> = ({
-    isDarkMode, onToggleTheme, onLibrary, onPaste, onUpload, onCamera, onOpenPalette, children,
+    isDarkMode, onToggleTheme, colorway, onColorway, onLibrary, onPaste, onUpload, onCamera, onOpenPalette, children,
 }) => (
     <div className="flex flex-col h-screen w-full bg-bg dark:bg-bg-dark font-sans text-ink dark:text-ink-dark transition-colors duration-300">
         <header className="flex items-center justify-between gap-3 px-4 sm:px-5 py-2.5 border-b border-line dark:border-line-dark bg-surface/90 dark:bg-surface-dark/90 backdrop-blur-md z-30 shrink-0">
             <button type="button" onClick={onLibrary} className="flex items-center gap-2.5 min-w-0">
-                <span className="flex items-center justify-center w-8 h-8 rounded-xl bg-primary text-white">
+                <span className="flex items-center justify-center w-8 h-8 rounded-xl bg-primary text-on-primary">
                     <Scan className="w-4 h-4" />
                 </span>
                 <span className="text-[17px] font-serif font-semibold tracking-tight">
@@ -46,11 +49,12 @@ const AppShell: React.FC<AppShellProps> = ({
                     <Camera className="w-4 h-4" />
                     <span>拍照</span>
                 </button>
-                <button type="button" onClick={onUpload} className="hidden sm:flex items-center gap-1.5 px-4 py-2 rounded-full bg-primary text-white text-sm font-medium shadow-card transition-all duration-200 ease-quiet hover:bg-primary-dark hover:-translate-y-px">
+                <button type="button" onClick={onUpload} className="hidden sm:flex items-center gap-1.5 px-4 py-2 rounded-full bg-primary text-on-primary text-sm font-medium shadow-card transition-all duration-200 ease-quiet hover:bg-primary-dark hover:-translate-y-px">
                     <UploadCloud className="w-4 h-4" />
                     <span>上传</span>
                 </button>
-                <button type="button" onClick={onToggleTheme} className="w-9 h-9 rounded-full hover:bg-primary/5 dark:hover:bg-white/10 flex items-center justify-center text-amber-600 dark:text-amber-400 transition-colors duration-200 ease-quiet" title="切换主题">
+                <ColorwayPicker colorway={colorway} onColorway={onColorway} />
+                <button type="button" onClick={onToggleTheme} className="w-9 h-9 rounded-full hover:bg-primary/5 dark:hover:bg-white/10 flex items-center justify-center text-amber-600 dark:text-amber-400 transition-colors duration-200 ease-quiet" title="切换深浅">
                     {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
                 </button>
             </div>

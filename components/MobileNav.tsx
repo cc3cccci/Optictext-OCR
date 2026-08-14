@@ -25,7 +25,7 @@ const MobileNav: React.FC<MobileNavProps> = ({ view, onLibrary, onCamera, onSear
                 className="flex flex-col items-center -mt-6"
                 aria-label="拍照识别"
             >
-                <span className="w-14 h-14 rounded-full bg-primary text-white shadow-lg shadow-primary/30 flex items-center justify-center">
+                <span className="w-14 h-14 rounded-full bg-primary text-on-primary shadow-lg shadow-primary/30 flex items-center justify-center">
                     <Camera className="w-6 h-6" />
                 </span>
                 <span className="text-[11px] mt-1 text-primary font-medium">拍照</span>

@@ -10,23 +10,27 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Quiet Surface (Coffee Minimal) — warm restrained palette.
-        // espresso solid for primary chrome; amber (Tailwind scale) for accents.
-        primary: '#4E3B2C',
-        'primary-dark': '#3C2D21',
-        'primary-light': '#C79A63',
-        bg: '#F2ECE1',
-        'bg-dark': '#161311',
-        surface: '#FCFAF4',
-        'surface-dark': '#211B15',
-        'surface-2': '#E9E0D0',
-        'surface-2-dark': '#2B241B',
-        ink: '#2B2119',
-        'ink-dark': '#F0E8DA',
-        muted: '#7C6C56',
-        'muted-dark': '#AD9E88',
-        line: '#E4D9C6',
-        'line-dark': '#372E23',
+        // Quiet Surface (Coffee Minimal) — semantic tokens driven by the
+        // colorway CSS variables in index.css (8 palettes). espresso-family
+        // solid for primary chrome; amber (Tailwind scale) is the single accent.
+        // The legacy `*-dark` names resolve to the SAME vars so existing
+        // `dark:` variants stay consistent when a dark colorway is active.
+        primary: 'rgb(var(--c-primary) / <alpha-value>)',
+        'primary-dark': 'rgb(var(--c-primary-dark) / <alpha-value>)',
+        'primary-light': 'rgb(var(--c-primary-light) / <alpha-value>)',
+        'on-primary': 'rgb(var(--c-on-primary) / <alpha-value>)',
+        bg: 'rgb(var(--c-bg) / <alpha-value>)',
+        'bg-dark': 'rgb(var(--c-bg) / <alpha-value>)',
+        surface: 'rgb(var(--c-surface) / <alpha-value>)',
+        'surface-dark': 'rgb(var(--c-surface) / <alpha-value>)',
+        'surface-2': 'rgb(var(--c-surface-2) / <alpha-value>)',
+        'surface-2-dark': 'rgb(var(--c-surface-2) / <alpha-value>)',
+        ink: 'rgb(var(--c-ink) / <alpha-value>)',
+        'ink-dark': 'rgb(var(--c-ink) / <alpha-value>)',
+        muted: 'rgb(var(--c-muted) / <alpha-value>)',
+        'muted-dark': 'rgb(var(--c-muted) / <alpha-value>)',
+        line: 'rgb(var(--c-line) / <alpha-value>)',
+        'line-dark': 'rgb(var(--c-line) / <alpha-value>)',
       },
       fontFamily: {
         sans: [

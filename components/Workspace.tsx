@@ -197,7 +197,7 @@ const Workspace: React.FC<WorkspaceProps> = ({
                         <RotateCcw className="w-3.5 h-3.5" /> 重试
                     </button>
                 )}
-                <button type="button" onClick={onExportTxt} className="hidden sm:flex items-center gap-1 px-3.5 h-8 rounded-full bg-primary text-white text-xs font-semibold shadow-card transition-colors duration-200 ease-quiet hover:bg-primary-dark">
+                <button type="button" onClick={onExportTxt} className="hidden sm:flex items-center gap-1 px-3.5 h-8 rounded-full bg-primary text-on-primary text-xs font-semibold shadow-card transition-colors duration-200 ease-quiet hover:bg-primary-dark">
                     <Download className="w-3.5 h-3.5" /> TXT
                 </button>
                 <button type="button" onClick={exportMd} className="hidden sm:flex items-center gap-1 px-3.5 h-8 rounded-full border border-line dark:border-line-dark text-xs font-semibold transition-colors duration-200 ease-quiet hover:border-primary hover:text-primary">

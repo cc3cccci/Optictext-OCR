@@ -16,7 +16,7 @@ import { useScans } from './hooks/useScans';
 import { useUpload } from './hooks/useUpload';
 
 const App: React.FC = () => {
-    const { isDarkMode, toggleTheme } = useTheme();
+    const { isDarkMode, toggleTheme, colorway, setColorway } = useTheme();
     const {
         scans, setScans, isLoading, error, mergeScan, startPolling, loadHistory,
         searchRemote, loadDetail, updateText, updateMeta, remove, removeMany, retry, reflow,
@@ -345,6 +345,8 @@ const App: React.FC = () => {
         <AppShell
             isDarkMode={isDarkMode}
             onToggleTheme={toggleTheme}
+            colorway={colorway}
+            onColorway={setColorway}
             onLibrary={goLibrary}
             onPaste={() => void handlePasteButton()}
             onUpload={() => fileInputRef.current?.click()}
